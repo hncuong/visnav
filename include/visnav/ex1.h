@@ -50,17 +50,15 @@ Eigen::Matrix<T, 3, 3> user_implemented_expmap(
 
   // w_hat
   Eigen::Matrix<T, 3, 3> w_hat;
-  w_hat << T(0.), -xi(2, 0), xi(1, 0),
-          xi(2, 0), T(0.), -xi(0, 0),
-          -xi(1, 0), xi(0, 0), T(0.);
+  w_hat << T(0.), -xi(2, 0), xi(1, 0), xi(2, 0), T(0.), -xi(0, 0), -xi(1, 0),
+      xi(0, 0), T(0.);
 
   Eigen::Matrix<T, 3, 3> exp_w_hat;
-  exp_w_hat << T(1.), T(0.), T(0.),
-          T(0.), T(1.), T(0.),
-          T(0.), T(0.), T(1.);
+  exp_w_hat << T(1.), T(0.), T(0.), T(0.), T(1.), T(0.), T(0.), T(0.), T(1.);
 
   if (theta > T(std::numeric_limits<double>::epsilon())) {
-    exp_w_hat += sin(theta) / theta * w_hat + (T(1.0) - cos(theta)) / (theta * theta) * w_hat * w_hat;
+    exp_w_hat += sin(theta) / theta * w_hat +
+                 (T(1.0) - cos(theta)) / (theta * theta) * w_hat * w_hat;
   } else {
     exp_w_hat += w_hat;
   }
@@ -75,10 +73,10 @@ Eigen::Matrix<T, 3, 1> user_implemented_logmap(
   // TODO SHEET 1: implement
   // Init w
   Eigen::Matrix<T, 3, 1> w;
-  w << mat(2,1) - mat(1,2), mat(0,2) - mat(2,0), mat(1,0) - mat(0,1);
+  w << mat(2, 1) - mat(1, 2), mat(0, 2) - mat(2, 0), mat(1, 0) - mat(0, 1);
 
   // Calculate theta
-  auto theta = acos((mat(0, 0) + mat(1,1) + mat(2,2) - T(1.)) / T(2.));
+  auto theta = acos((mat(0, 0) + mat(1, 1) + mat(2, 2) - T(1.)) / T(2.));
 
   // If theta small, approximate sin(theta) ~ theta
   auto factor = T(0.5);
@@ -102,21 +100,19 @@ Eigen::Matrix<T, 4, 4> user_implemented_expmap(
   // ROtation part
   Eigen::Matrix<T, 3, 1> w;
   Eigen::Matrix<T, 3, 1> v;
-  w << xi(3,0), xi(4,0), xi(5,0);
-  v << xi(0,0), xi(1,0), xi(2,0);
+  w << xi(3, 0), xi(4, 0), xi(5, 0);
+  v << xi(0, 0), xi(1, 0), xi(2, 0);
 
-  Eigen::Matrix<T, 3, 3> exp_w_hat ;//= user_implemented_expmap()
+  Eigen::Matrix<T, 3, 3> exp_w_hat;  //= user_implemented_expmap()
   exp_w_hat = user_implemented_expmap(w);
-  for (int i=0; i < 3; i++)
-      for (int j=0; j<3; j++)
-          transform(i,j) = exp_w_hat(i, j);
+  for (int i = 0; i < 3; i++)
+    for (int j = 0; j < 3; j++) transform(i, j) = exp_w_hat(i, j);
 
   // Translation part
   // w_hat
   Eigen::Matrix<T, 3, 3> w_hat;
-  w_hat << T(0.), -w(2, 0), w(1, 0),
-          w(2, 0), T(0.), -w(0, 0),
-          -w(1, 0), w(0, 0), T(0.);
+  w_hat << T(0.), -w(2, 0), w(1, 0), w(2, 0), T(0.), -w(0, 0), -w(1, 0),
+      w(0, 0), T(0.);
 
   Eigen::Matrix<T, 3, 3> J;
 
@@ -126,18 +122,17 @@ Eigen::Matrix<T, 4, 4> user_implemented_expmap(
 
   if (theta > T(std::numeric_limits<double>::epsilon())) {
     J = Eigen::Matrix<T, 3, 3>::Identity() +
-            (T(1.0) - cos(theta)) / (theta_sq) * w_hat +
-            (theta - sin(theta)) / (theta_sq * theta) * w_hat_sq;
+        (T(1.0) - cos(theta)) / (theta_sq)*w_hat +
+        (theta - sin(theta)) / (theta_sq * theta) * w_hat_sq;
   } else {
     J = exp_w_hat;
   }
 
-
   Eigen::Matrix<T, 3, 1> jv;
   jv = J * v;
-  transform(0,3) = jv(0,0);
-  transform(1,3) = jv(1,0);
-  transform(2,3) = jv(2,0);
+  transform(0, 3) = jv(0, 0);
+  transform(1, 3) = jv(1, 0);
+  transform(2, 3) = jv(2, 0);
 
   return transform;
 }
@@ -148,16 +143,15 @@ Eigen::Matrix<T, 6, 1> user_implemented_logmap(
     const Eigen::Matrix<T, 4, 4>& mat) {
   // TODO SHEET 1: implement
   Eigen::Matrix<T, 3, 3> R;
-  R = mat.template topLeftCorner<3,3>();
+  R = mat.template topLeftCorner<3, 3>();
   Eigen::Matrix<T, 3, 1> translation;
-  translation = mat.template topRightCorner<3,1>();
+  translation = mat.template topRightCorner<3, 1>();
 
   // Rotation
   Eigen::Matrix<T, 3, 1> w = user_implemented_logmap(R);
   Eigen::Matrix<T, 3, 3> w_hat;
-  w_hat << T(0.), -w(2, 0), w(1, 0),
-          w(2, 0), T(0.), -w(0, 0),
-          -w(1, 0), w(0, 0), T(0.);
+  w_hat << T(0.), -w(2, 0), w(1, 0), w(2, 0), T(0.), -w(0, 0), -w(1, 0),
+      w(0, 0), T(0.);
   auto theta = w.norm();
 
   // Translation
@@ -167,13 +161,15 @@ Eigen::Matrix<T, 6, 1> user_implemented_logmap(
     J_inv = Eigen::Matrix<T, 3, 3>::Identity() - w_hat / T(2.);
   } else {
     J_inv = Eigen::Matrix<T, 3, 3>::Identity() - w_hat / T(2.) +
-            (T(1.) / (theta * theta) - (1+ cos(theta)) / (2 * theta * sin(theta))) * w_hat * w_hat;
+            (T(1.) / (theta * theta) -
+             (1 + cos(theta)) / (2 * theta * sin(theta))) *
+                w_hat * w_hat;
   }
   Eigen::Matrix<T, 3, 1> v = J_inv * translation;
 
   Eigen::Matrix<T, 6, 1> ret;
-  ret.template topLeftCorner<3,1>() = v;
-  ret.template bottomLeftCorner<3,1>() = w;
+  ret.template topLeftCorner<3, 1>() = v;
+  ret.template bottomLeftCorner<3, 1>() = w;
 
   return ret;
 }
