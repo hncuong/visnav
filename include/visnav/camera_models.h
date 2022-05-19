@@ -37,16 +37,15 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <Eigen/Dense>
 #include <sophus/se3.hpp>
 
+#include <cmath>
 #include <visnav/common_types.h>
 
 namespace visnav {
 
-template <typename Scalar>
-class AbstractCamera;
+template <typename Scalar> class AbstractCamera;
 
-template <typename Scalar>
-class PinholeCamera : public AbstractCamera<Scalar> {
- public:
+template <typename Scalar> class PinholeCamera : public AbstractCamera<Scalar> {
+public:
   static constexpr size_t N = 8;
 
   typedef Eigen::Matrix<Scalar, 2, 1> Vec2;
@@ -55,7 +54,7 @@ class PinholeCamera : public AbstractCamera<Scalar> {
   typedef Eigen::Matrix<Scalar, N, 1> VecN;
 
   PinholeCamera() = default;
-  PinholeCamera(const VecN& p) : param(p) {}
+  PinholeCamera(const VecN &p) : param(p) {}
 
   static PinholeCamera<Scalar> getTestProjections() {
     VecN vec1;
@@ -65,65 +64,76 @@ class PinholeCamera : public AbstractCamera<Scalar> {
     return res;
   }
 
-  Scalar* data() { return param.data(); }
+  Scalar *data() { return param.data(); }
 
-  const Scalar* data() const { return param.data(); }
+  const Scalar *data() const { return param.data(); }
 
   static std::string getName() { return "pinhole"; }
   std::string name() const { return getName(); }
 
-  virtual Vec2 project(const Vec3& p) const {
-    const Scalar& fx = param[0];
-    const Scalar& fy = param[1];
-    const Scalar& cx = param[2];
-    const Scalar& cy = param[3];
+  virtual Vec2 project(const Vec3 &p) const {
+    const Scalar &fx = param[0];
+    const Scalar &fy = param[1];
+    const Scalar &cx = param[2];
+    const Scalar &cy = param[3];
 
-    const Scalar& x = p[0];
-    const Scalar& y = p[1];
-    const Scalar& z = p[2];
+    const Scalar &x = p[0];
+    const Scalar &y = p[1];
+    const Scalar &z = p[2];
 
     Vec2 res;
 
     // TODO SHEET 2: implement camera model
-    UNUSED(fx);
-    UNUSED(fy);
-    UNUSED(cx);
-    UNUSED(cy);
-    UNUSED(x);
-    UNUSED(y);
-    UNUSED(z);
+    res(0, 0) = fx * x / z + cx;
+    res(1, 0) = fy * y / z + cy;
+
+    //    UNUSED(fx);
+    //    UNUSED(fy);
+    //    UNUSED(cx);
+    //    UNUSED(cy);
+    //    UNUSED(x);
+    //    UNUSED(y);
+    //    UNUSED(z);
+    //    std::cout << res << " Project\n";
 
     return res;
   }
 
-  virtual Vec3 unproject(const Vec2& p) const {
-    const Scalar& fx = param[0];
-    const Scalar& fy = param[1];
-    const Scalar& cx = param[2];
-    const Scalar& cy = param[3];
+  virtual Vec3 unproject(const Vec2 &p) const {
+    const Scalar &fx = param[0];
+    const Scalar &fy = param[1];
+    const Scalar &cx = param[2];
+    const Scalar &cy = param[3];
 
     Vec3 res;
-
     // TODO SHEET 2: implement camera model
-    UNUSED(p);
-    UNUSED(fx);
-    UNUSED(fy);
-    UNUSED(cx);
-    UNUSED(cy);
+    res(0, 0) = (p(0, 0) - cx) / fx; // x
+    res(1, 0) = (p(1, 0) - cy) / fy; // y
+    res(2, 0) = Scalar(1.);
+
+    res /= std::sqrt(res(0, 0) * res(0, 0) + res(1, 0) * res(1, 0) +
+                     res(2, 0) * res(2, 0));
+    //    std::cout << res << " Un-Project\n";
+
+    //    UNUSED(p);
+    //    UNUSED(fx);
+    //    UNUSED(fy);
+    //    UNUSED(cx);
+    //    UNUSED(cy);
 
     return res;
   }
 
-  const VecN& getParam() const { return param; }
+  const VecN &getParam() const { return param; }
 
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
- private:
+private:
   VecN param = VecN::Zero();
 };
 
 template <typename Scalar = double>
 class ExtendedUnifiedCamera : public AbstractCamera<Scalar> {
- public:
+public:
   // NOTE: For convenience for serialization and handling different camera
   // models in ceres functors, we use the same parameter vector size for all of
   // them, even if that means that for some certain entries are unused /
@@ -137,7 +147,7 @@ class ExtendedUnifiedCamera : public AbstractCamera<Scalar> {
   typedef Eigen::Matrix<Scalar, N, 1> VecN;
 
   ExtendedUnifiedCamera() = default;
-  ExtendedUnifiedCamera(const VecN& p) : param(p) {}
+  ExtendedUnifiedCamera(const VecN &p) : param(p) {}
 
   static ExtendedUnifiedCamera getTestProjections() {
     VecN vec1;
@@ -147,72 +157,88 @@ class ExtendedUnifiedCamera : public AbstractCamera<Scalar> {
     return res;
   }
 
-  Scalar* data() { return param.data(); }
-  const Scalar* data() const { return param.data(); }
+  Scalar *data() { return param.data(); }
+  const Scalar *data() const { return param.data(); }
 
   static const std::string getName() { return "eucm"; }
   std::string name() const { return getName(); }
 
-  inline Vec2 project(const Vec3& p) const {
-    const Scalar& fx = param[0];
-    const Scalar& fy = param[1];
-    const Scalar& cx = param[2];
-    const Scalar& cy = param[3];
-    const Scalar& alpha = param[4];
-    const Scalar& beta = param[5];
+  inline Vec2 project(const Vec3 &p) const {
+    const Scalar &fx = param[0];
+    const Scalar &fy = param[1];
+    const Scalar &cx = param[2];
+    const Scalar &cy = param[3];
+    const Scalar &alpha = param[4];
+    const Scalar &beta = param[5];
 
-    const Scalar& x = p[0];
-    const Scalar& y = p[1];
-    const Scalar& z = p[2];
+    const Scalar &x = p[0];
+    const Scalar &y = p[1];
+    const Scalar &z = p[2];
 
     Vec2 res;
 
     // TODO SHEET 2: implement camera model
-    UNUSED(fx);
-    UNUSED(fy);
-    UNUSED(cx);
-    UNUSED(cy);
-    UNUSED(alpha);
-    UNUSED(beta);
-    UNUSED(x);
-    UNUSED(y);
-    UNUSED(z);
+    Scalar d = std::sqrt(beta * (x * x + y * y) + z * z);
+    Scalar factor = alpha * d + (Scalar(1.) - alpha) * z;
+    res(0, 0) = fx * x / factor + cx;
+    res(1, 0) = fy * y / factor + cy;
+
+    //    UNUSED(fx);
+    //    UNUSED(fy);
+    //    UNUSED(cx);
+    //    UNUSED(cy);
+    //    UNUSED(alpha);
+    //    UNUSED(beta);
+    //    UNUSED(x);
+    //    UNUSED(y);
+    //    UNUSED(z);
 
     return res;
   }
 
-  Vec3 unproject(const Vec2& p) const {
-    const Scalar& fx = param[0];
-    const Scalar& fy = param[1];
-    const Scalar& cx = param[2];
-    const Scalar& cy = param[3];
-    const Scalar& alpha = param[4];
-    const Scalar& beta = param[5];
+  Vec3 unproject(const Vec2 &p) const {
+    const Scalar &fx = param[0];
+    const Scalar &fy = param[1];
+    const Scalar &cx = param[2];
+    const Scalar &cy = param[3];
+    const Scalar &alpha = param[4];
+    const Scalar &beta = param[5];
 
     Vec3 res;
 
     // TODO SHEET 2: implement camera model
-    UNUSED(p);
-    UNUSED(fx);
-    UNUSED(fy);
-    UNUSED(cx);
-    UNUSED(cy);
-    UNUSED(alpha);
-    UNUSED(beta);
+    Scalar mx = (p(0, 0) - cx) / fx;
+    Scalar my = (p(1, 0) - cy) / fy;
+    Scalar r_sq = mx * mx + my * my;
+    Scalar mz =
+        (Scalar(1) - beta * alpha * alpha * r_sq) /
+        (alpha * std::sqrt(Scalar(1) - (2 * alpha - Scalar(1)) * beta * r_sq) +
+         (Scalar(1) - alpha));
+    Scalar norm_term = std::sqrt(mx * mx + my * my + mz * mz);
+    res(0, 0) = mx / norm_term;
+    res(1, 0) = my / norm_term;
+    res(2, 0) = mz / norm_term;
+    //    UNUSED(p);
+    //    UNUSED(fx);
+    //    UNUSED(fy);
+    //    UNUSED(cx);
+    //    UNUSED(cy);
+    //    UNUSED(alpha);
+    //    UNUSED(beta);
 
     return res;
   }
 
-  const VecN& getParam() const { return param; }
+  const VecN &getParam() const { return param; }
 
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
- private:
+private:
   VecN param = VecN::Zero();
 };
 
 template <typename Scalar>
 class DoubleSphereCamera : public AbstractCamera<Scalar> {
- public:
+public:
   static constexpr size_t N = 8;
 
   typedef Eigen::Matrix<Scalar, 2, 1> Vec2;
@@ -221,7 +247,7 @@ class DoubleSphereCamera : public AbstractCamera<Scalar> {
   typedef Eigen::Matrix<Scalar, N, 1> VecN;
 
   DoubleSphereCamera() = default;
-  DoubleSphereCamera(const VecN& p) : param(p) {}
+  DoubleSphereCamera(const VecN &p) : param(p) {}
 
   static DoubleSphereCamera<Scalar> getTestProjections() {
     VecN vec1;
@@ -232,71 +258,93 @@ class DoubleSphereCamera : public AbstractCamera<Scalar> {
     return res;
   }
 
-  Scalar* data() { return param.data(); }
-  const Scalar* data() const { return param.data(); }
+  Scalar *data() { return param.data(); }
+  const Scalar *data() const { return param.data(); }
 
   static std::string getName() { return "ds"; }
   std::string name() const { return getName(); }
 
-  virtual Vec2 project(const Vec3& p) const {
-    const Scalar& fx = param[0];
-    const Scalar& fy = param[1];
-    const Scalar& cx = param[2];
-    const Scalar& cy = param[3];
-    const Scalar& xi = param[4];
-    const Scalar& alpha = param[5];
+  virtual Vec2 project(const Vec3 &p) const {
+    const Scalar &fx = param[0];
+    const Scalar &fy = param[1];
+    const Scalar &cx = param[2];
+    const Scalar &cy = param[3];
+    const Scalar &xi = param[4];
+    const Scalar &alpha = param[5];
 
-    const Scalar& x = p[0];
-    const Scalar& y = p[1];
-    const Scalar& z = p[2];
+    const Scalar &x = p[0];
+    const Scalar &y = p[1];
+    const Scalar &z = p[2];
 
     Vec2 res;
 
     // TODO SHEET 2: implement camera model
-    UNUSED(fx);
-    UNUSED(fy);
-    UNUSED(cx);
-    UNUSED(cy);
-    UNUSED(xi);
-    UNUSED(alpha);
-    UNUSED(x);
-    UNUSED(y);
-    UNUSED(z);
+    Scalar d1 = std::sqrt(x * x + y * y + z * z);
+    Scalar xid1_z = xi * d1 + z;
+    Scalar d2 = std::sqrt(x * x + y * y + xid1_z * xid1_z);
+    Scalar norm_term = alpha * d2 + (Scalar(1) - alpha) * xid1_z;
+    res(0, 0) = fx * x / norm_term + cx;
+    res(1, 0) = fy * y / norm_term + cy;
+
+    //    UNUSED(fx);
+    //    UNUSED(fy);
+    //    UNUSED(cx);
+    //    UNUSED(cy);
+    //    UNUSED(xi);
+    //    UNUSED(alpha);
+    //    UNUSED(x);
+    //    UNUSED(y);
+    //    UNUSED(z);
 
     return res;
   }
 
-  virtual Vec3 unproject(const Vec2& p) const {
-    const Scalar& fx = param[0];
-    const Scalar& fy = param[1];
-    const Scalar& cx = param[2];
-    const Scalar& cy = param[3];
-    const Scalar& xi = param[4];
-    const Scalar& alpha = param[5];
+  virtual Vec3 unproject(const Vec2 &p) const {
+    const Scalar &fx = param[0];
+    const Scalar &fy = param[1];
+    const Scalar &cx = param[2];
+    const Scalar &cy = param[3];
+    const Scalar &xi = param[4];
+    const Scalar &alpha = param[5];
 
     Vec3 res;
 
     // TODO SHEET 2: implement camera model
-    UNUSED(p);
-    UNUSED(fx);
-    UNUSED(fy);
-    UNUSED(cx);
-    UNUSED(cy);
-    UNUSED(xi);
-    UNUSED(alpha);
+    Scalar mx = (p(0, 0) - cx) / fx;
+    Scalar my = (p(1, 0) - cy) / fy;
+    Scalar r_sq = mx * mx + my * my;
+
+    Scalar mz = (Scalar(1) - alpha * alpha * r_sq) /
+                (alpha * std::sqrt(Scalar(1) - (2 * alpha - Scalar(1)) * r_sq) +
+                 (Scalar(1) - alpha));
+    Scalar mz_sq = mz * mz;
+    Scalar norm_term =
+        (mz * xi + std::sqrt(mz_sq + (1 - xi * xi) * r_sq)) / (mz_sq + r_sq);
+
+    res(0, 0) = mx * norm_term;
+    res(1, 0) = my * norm_term;
+    res(2, 0) = mz * norm_term - xi;
+
+    //    UNUSED(p);
+    //    UNUSED(fx);
+    //    UNUSED(fy);
+    //    UNUSED(cx);
+    //    UNUSED(cy);
+    //    UNUSED(xi);
+    //    UNUSED(alpha);
     return res;
   }
 
-  const VecN& getParam() const { return param; }
+  const VecN &getParam() const { return param; }
 
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
- private:
+private:
   VecN param = VecN::Zero();
 };
 
 template <typename Scalar = double>
 class KannalaBrandt4Camera : public AbstractCamera<Scalar> {
- public:
+public:
   static constexpr int N = 8;
 
   typedef Eigen::Matrix<Scalar, 2, 1> Vec2;
@@ -306,7 +354,7 @@ class KannalaBrandt4Camera : public AbstractCamera<Scalar> {
   typedef Eigen::Matrix<Scalar, N, 1> VecN;
 
   KannalaBrandt4Camera() = default;
-  KannalaBrandt4Camera(const VecN& p) : param(p) {}
+  KannalaBrandt4Camera(const VecN &p) : param(p) {}
 
   static KannalaBrandt4Camera getTestProjections() {
     VecN vec1;
@@ -317,73 +365,113 @@ class KannalaBrandt4Camera : public AbstractCamera<Scalar> {
     return res;
   }
 
-  Scalar* data() { return param.data(); }
+  Scalar *data() { return param.data(); }
 
-  const Scalar* data() const { return param.data(); }
+  const Scalar *data() const { return param.data(); }
 
   static std::string getName() { return "kb4"; }
   std::string name() const { return getName(); }
 
-  inline Vec2 project(const Vec3& p) const {
-    const Scalar& fx = param[0];
-    const Scalar& fy = param[1];
-    const Scalar& cx = param[2];
-    const Scalar& cy = param[3];
-    const Scalar& k1 = param[4];
-    const Scalar& k2 = param[5];
-    const Scalar& k3 = param[6];
-    const Scalar& k4 = param[7];
+  inline Vec2 project(const Vec3 &p) const {
+    const Scalar &fx = param[0];
+    const Scalar &fy = param[1];
+    const Scalar &cx = param[2];
+    const Scalar &cy = param[3];
+    const Scalar &k1 = param[4];
+    const Scalar &k2 = param[5];
+    const Scalar &k3 = param[6];
+    const Scalar &k4 = param[7];
 
-    const Scalar& x = p[0];
-    const Scalar& y = p[1];
-    const Scalar& z = p[2];
+    const Scalar &x = p[0];
+    const Scalar &y = p[1];
+    const Scalar &z = p[2];
 
     Vec2 res;
 
     // TODO SHEET 2: implement camera model
-    UNUSED(fx);
-    UNUSED(fy);
-    UNUSED(cx);
-    UNUSED(cy);
-    UNUSED(k1);
-    UNUSED(k2);
-    UNUSED(k3);
-    UNUSED(k4);
-    UNUSED(x);
-    UNUSED(y);
-    UNUSED(z);
+    Scalar epsilon = Scalar(std::numeric_limits<double>::epsilon());
+    Scalar r = std::sqrt(x * x + y * y + epsilon * epsilon);
+    Scalar theta = std::atan2(r, z);
+    Scalar theta_sq = theta * theta;
+    Scalar d_theta =
+        ((((k4 * theta_sq + k3) * theta_sq + k2) * theta_sq + k1) * theta_sq +
+         Scalar(1)) *
+        theta;
+    res(0, 0) = fx * d_theta * x / r + cx;
+    res(1, 0) = fy * d_theta * y / r + cy;
+    //    std::cout << theta << " r = " << r << " " << x << " " << y << " " << z
+    //              << " " << res(0, 0) << " " << res(1, 0) << " Project\n";
+    //    UNUSED(fx);
+    //    UNUSED(fy);
+    //    UNUSED(cx);
+    //    UNUSED(cy);
+    //    UNUSED(k1);
+    //    UNUSED(k2);
+    //    UNUSED(k3);
+    //    UNUSED(k4);
+    //    UNUSED(x);
+    //    UNUSED(y);
+    //    UNUSED(z);
 
     return res;
   }
 
-  Vec3 unproject(const Vec2& p) const {
-    const Scalar& fx = param[0];
-    const Scalar& fy = param[1];
-    const Scalar& cx = param[2];
-    const Scalar& cy = param[3];
+  Vec3 unproject(const Vec2 &p) const {
+    const Scalar &fx = param[0];
+    const Scalar &fy = param[1];
+    const Scalar &cx = param[2];
+    const Scalar &cy = param[3];
+    const Scalar &k1 = param[4];
+    const Scalar &k2 = param[5];
+    const Scalar &k3 = param[6];
+    const Scalar &k4 = param[7];
 
     Vec3 res;
 
     // TODO SHEET 2: implement camera model
-    UNUSED(p);
-    UNUSED(fx);
-    UNUSED(fy);
-    UNUSED(cx);
-    UNUSED(cy);
+    Scalar mx = (p(0, 0) - cx) / fx;
+    Scalar my = (p(1, 0) - cy) / fy;
+    Scalar epsilon = Scalar(std::numeric_limits<double>::epsilon());
+    Scalar ru = std::sqrt(mx * mx + my * my + epsilon * epsilon);
+
+    // Now find theta = d -1 (ru); d(theta) = ru
+    Scalar theta = Scalar(0);
+    for (int i = 0; i < 6; i++) {
+      Scalar theta_sq = theta * theta;
+      Scalar d_theta =
+          ((((k4 * theta_sq + k3) * theta_sq + k2) * theta_sq + k1) * theta_sq +
+           Scalar(1)) *
+              theta -
+          ru;
+      Scalar d_derivative =
+          (((9 * k4 * theta_sq + 7 * k3) * theta_sq + 5 * k2) * theta_sq +
+           3 * k1) *
+              theta_sq +
+          Scalar(1);
+      theta -= d_theta / d_derivative;
+    }
+    res(0, 0) = std::sin(theta) * mx / ru;
+    res(1, 0) = std::sin(theta) * my / ru;
+    res(2, 0) = std::cos(theta);
+    //    std::cout << theta << " ru -" << ru << " Un-Project\n";
+    //    UNUSED(p);
+    //    UNUSED(fx);
+    //    UNUSED(fy);
+    //    UNUSED(cx);
+    //    UNUSED(cy);
 
     return res;
   }
 
-  const VecN& getParam() const { return param; }
+  const VecN &getParam() const { return param; }
 
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
- private:
+private:
   VecN param = VecN::Zero();
 };
 
-template <typename Scalar>
-class AbstractCamera {
- public:
+template <typename Scalar> class AbstractCamera {
+public:
   static constexpr size_t N = 8;
 
   typedef Eigen::Matrix<Scalar, 2, 1> Vec2;
@@ -393,25 +481,25 @@ class AbstractCamera {
 
   virtual ~AbstractCamera() = default;
 
-  virtual Scalar* data() = 0;
+  virtual Scalar *data() = 0;
 
-  virtual const Scalar* data() const = 0;
+  virtual const Scalar *data() const = 0;
 
-  virtual Vec2 project(const Vec3& p) const = 0;
+  virtual Vec2 project(const Vec3 &p) const = 0;
 
-  virtual Vec3 unproject(const Vec2& p) const = 0;
+  virtual Vec3 unproject(const Vec2 &p) const = 0;
 
   virtual std::string name() const = 0;
 
-  virtual const VecN& getParam() const = 0;
+  virtual const VecN &getParam() const = 0;
 
   inline int width() const { return width_; }
-  inline int& width() { return width_; }
+  inline int &width() { return width_; }
   inline int height() const { return height_; }
-  inline int& height() { return height_; }
+  inline int &height() { return height_; }
 
-  static std::shared_ptr<AbstractCamera> from_data(const std::string& name,
-                                                   const Scalar* sIntr) {
+  static std::shared_ptr<AbstractCamera> from_data(const std::string &name,
+                                                   const Scalar *sIntr) {
     if (name == DoubleSphereCamera<Scalar>::getName()) {
       Eigen::Map<Eigen::Matrix<Scalar, 8, 1> const> intr(sIntr);
       return std::shared_ptr<AbstractCamera>(
@@ -435,8 +523,8 @@ class AbstractCamera {
   }
 
   // Loading from double sphere initialization
-  static std::shared_ptr<AbstractCamera> initialize(const std::string& name,
-                                                    const Scalar* sIntr) {
+  static std::shared_ptr<AbstractCamera> initialize(const std::string &name,
+                                                    const Scalar *sIntr) {
     Eigen::Matrix<Scalar, 8, 1> init_intr;
 
     if (name == DoubleSphereCamera<Scalar>::getName()) {
@@ -479,10 +567,10 @@ class AbstractCamera {
     }
   }
 
- private:
+private:
   // image dimensions
   int width_ = 0;
   int height_ = 0;
 };
 
-}  // namespace visnav
+} // namespace visnav
