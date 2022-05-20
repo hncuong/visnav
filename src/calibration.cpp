@@ -58,8 +58,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 using namespace visnav;
 
-void drawImageOverlay(pangolin::View &v, size_t cam_id);
-void load_data(const std::string &path);
+void drawImageOverlay(pangolin::View& v, size_t cam_id);
+void load_data(const std::string& path);
 void compute_projections();
 void save_calib();
 void optimize();
@@ -95,7 +95,7 @@ pangolin::Var<bool> show_opt("ui.show_opt", true, true);
 std::string dataset_path;
 std::string cam_model = "ds";
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
   const int UI_WIDTH = 200;
   const int NUM_CAMS = 2;
 
@@ -111,7 +111,7 @@ int main(int argc, char **argv) {
 
   try {
     app.parse(argc, argv);
-  } catch (const CLI::ParseError &e) {
+  } catch (const CLI::ParseError& e) {
     return app.exit(e);
   }
 
@@ -121,7 +121,7 @@ int main(int argc, char **argv) {
   if (show_gui) {
     pangolin::CreateWindowAndBind("Main", 1800, 1000);
 
-    pangolin::View *img_view_display;
+    pangolin::View* img_view_display;
 
     std::vector<std::shared_ptr<pangolin::ImageView>> img_view;
 
@@ -180,7 +180,7 @@ int main(int argc, char **argv) {
   return 0;
 }
 
-void drawImageOverlay(pangolin::View &v, size_t cam_id) {
+void drawImageOverlay(pangolin::View& v, size_t cam_id) {
   UNUSED(v);
 
   FrameId frame_id = static_cast<FrameId>(show_frame);
@@ -194,7 +194,7 @@ void drawImageOverlay(pangolin::View &v, size_t cam_id) {
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     if (calib_corners.find(fcid) != calib_corners.end()) {
-      const CalibCornerData &cr = calib_corners.at(fcid);
+      const CalibCornerData& cr = calib_corners.at(fcid);
 
       for (size_t i = 0; i < cr.corners.size(); i++) {
         Eigen::Vector2d c = cr.corners[i];
@@ -219,7 +219,7 @@ void drawImageOverlay(pangolin::View &v, size_t cam_id) {
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     if (opt_corners.find(fcid) != opt_corners.end()) {
-      const CalibCornerData &cr = opt_corners.at(fcid);
+      const CalibCornerData& cr = opt_corners.at(fcid);
 
       for (size_t i = 0; i < cr.corners.size(); i++) {
         Eigen::Vector2d c = cr.corners[i];
@@ -243,7 +243,7 @@ void drawImageOverlay(pangolin::View &v, size_t cam_id) {
 /// extrinsic caliubration as well as initial pose guesses. It initializes the
 /// global data structures like `calib_init_poses`, `calib_corners`,
 /// `calib_cam`, `vec_T_w_i` and `calib_images`.
-void load_data(const std::string &dataset_path) {
+void load_data(const std::string& dataset_path) {
   std::string poses_path = dataset_path + "/init_poses.json";
   std::string corners_path = dataset_path + "/detected_corners.json";
   std::string calib_path = dataset_path + "/calibration-double-sphere.json";
@@ -304,7 +304,7 @@ void load_data(const std::string &dataset_path) {
 
   vec_T_w_i.resize(calib_corners.size() / 2);
 
-  for (const auto &kv : calib_corners) {
+  for (const auto& kv : calib_corners) {
     std::stringstream ss;
     ss << dataset_path << "/" << kv.first.frame_id << "_" << kv.first.cam_id
        << ".jpg";
@@ -339,7 +339,7 @@ void compute_projections() {
   opt_corners.clear();
 
   // For calib corrner
-  for (const auto &kv : calib_corners) {
+  for (const auto& kv : calib_corners) {
     CalibCornerData ccd;
     // April grid is constant (for world reference)
     // We map grid location to location in other camera
@@ -386,27 +386,26 @@ void optimize() {
   problem.AddParameterBlock(calib_cam.intrinsics[1]->data(), 8);
   problem.SetParameterBlockConstant(calib_cam.T_i_c[0].data());
 
-  for (const auto &kv : calib_corners) {
+  for (const auto& kv : calib_corners) {
     // Transformation from body (IMU) frame to world frame
-    Sophus::SE3d &T_w_i = vec_T_w_i[kv.first.frame_id];
+    Sophus::SE3d& T_w_i = vec_T_w_i[kv.first.frame_id];
     problem.AddParameterBlock(T_w_i.data(), Sophus::SE3d::num_parameters,
                               new Sophus::test::LocalParameterizationSE3);
 
     // Transformation from camera to body (IMU) frame
-    Sophus::SE3d &T_i_c = calib_cam.T_i_c[kv.first.cam_id];
+    Sophus::SE3d& T_i_c = calib_cam.T_i_c[kv.first.cam_id];
     auto intrinsic = calib_cam.intrinsics[kv.first.cam_id];
 
     for (size_t i = 0; i < kv.second.corners.size(); i++) {
-
       // 3D coordinates of the aprilgrid corner in the world frame
       // Not all corners are in images
       Eigen::Vector2d p_2d = kv.second.corners[i];
       size_t corner_idx = kv.second.corner_ids[i];
       Eigen::Vector3d p_3d = aprilgrid.aprilgrid_corner_pos_3d[corner_idx];
 
-      ReprojectionCostFunctor *c =
+      ReprojectionCostFunctor* c =
           new ReprojectionCostFunctor(p_2d, p_3d, cam_model);
-      ceres::CostFunction *cost_function =
+      ceres::CostFunction* cost_function =
           new ceres::AutoDiffCostFunction<ReprojectionCostFunctor, 2,
                                           Sophus::SE3d::num_parameters,
                                           Sophus::SE3d::num_parameters, 8>(c);

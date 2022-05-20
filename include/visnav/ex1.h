@@ -42,8 +42,8 @@ namespace visnav {
 
 // Implement exp for SO(3)
 template <class T>
-Eigen::Matrix<T, 3, 3>
-user_implemented_expmap(const Eigen::Matrix<T, 3, 1> &xi) {
+Eigen::Matrix<T, 3, 3> user_implemented_expmap(
+    const Eigen::Matrix<T, 3, 1>& xi) {
   // TODO SHEET 1: implement
   // Compute theta
   auto theta = xi.norm();
@@ -68,8 +68,8 @@ user_implemented_expmap(const Eigen::Matrix<T, 3, 1> &xi) {
 
 // Implement log for SO(3)
 template <class T>
-Eigen::Matrix<T, 3, 1>
-user_implemented_logmap(const Eigen::Matrix<T, 3, 3> &mat) {
+Eigen::Matrix<T, 3, 1> user_implemented_logmap(
+    const Eigen::Matrix<T, 3, 3>& mat) {
   // TODO SHEET 1: implement
   // Init w
   Eigen::Matrix<T, 3, 1> w;
@@ -90,8 +90,8 @@ user_implemented_logmap(const Eigen::Matrix<T, 3, 3> &mat) {
 
 // Implement exp for SE(3)
 template <class T>
-Eigen::Matrix<T, 4, 4>
-user_implemented_expmap(const Eigen::Matrix<T, 6, 1> &xi) {
+Eigen::Matrix<T, 4, 4> user_implemented_expmap(
+    const Eigen::Matrix<T, 6, 1>& xi) {
   // TODO SHEET 1: implement
   Eigen::Matrix<T, 4, 4> transform;
   transform.setZero();
@@ -103,11 +103,10 @@ user_implemented_expmap(const Eigen::Matrix<T, 6, 1> &xi) {
   w << xi(3, 0), xi(4, 0), xi(5, 0);
   v << xi(0, 0), xi(1, 0), xi(2, 0);
 
-  Eigen::Matrix<T, 3, 3> exp_w_hat; //= user_implemented_expmap()
+  Eigen::Matrix<T, 3, 3> exp_w_hat;  //= user_implemented_expmap()
   exp_w_hat = user_implemented_expmap(w);
   for (int i = 0; i < 3; i++)
-    for (int j = 0; j < 3; j++)
-      transform(i, j) = exp_w_hat(i, j);
+    for (int j = 0; j < 3; j++) transform(i, j) = exp_w_hat(i, j);
 
   // Translation part
   // w_hat
@@ -140,8 +139,8 @@ user_implemented_expmap(const Eigen::Matrix<T, 6, 1> &xi) {
 
 // Implement log for SE(3)
 template <class T>
-Eigen::Matrix<T, 6, 1>
-user_implemented_logmap(const Eigen::Matrix<T, 4, 4> &mat) {
+Eigen::Matrix<T, 6, 1> user_implemented_logmap(
+    const Eigen::Matrix<T, 4, 4>& mat) {
   // TODO SHEET 1: implement
   Eigen::Matrix<T, 3, 3> R;
   R = mat.template topLeftCorner<3, 3>();
@@ -175,4 +174,4 @@ user_implemented_logmap(const Eigen::Matrix<T, 4, 4> &mat) {
   return ret;
 }
 
-} // namespace visnav
+}  // namespace visnav
