@@ -338,6 +338,7 @@ void load_data(const std::string &dataset_path) {
 void compute_projections() {
   opt_corners.clear();
 
+  // For calib corrner
   for (const auto &kv : calib_corners) {
     CalibCornerData ccd;
     // April grid is constant (for world reference)
@@ -375,7 +376,44 @@ void optimize() {
   // Build the problem.
   ceres::Problem problem;
 
-  // TODO SHEET 2: setup optimization problem
+  problem.AddParameterBlock(calib_cam.T_i_c[0].data(),
+                            Sophus::SE3d::num_parameters,
+                            new Sophus::test::LocalParameterizationSE3);
+  problem.AddParameterBlock(calib_cam.intrinsics[0]->data(), 8);
+  problem.AddParameterBlock(calib_cam.T_i_c[1].data(),
+                            Sophus::SE3d::num_parameters,
+                            new Sophus::test::LocalParameterizationSE3);
+  problem.AddParameterBlock(calib_cam.intrinsics[1]->data(), 8);
+  problem.SetParameterBlockConstant(calib_cam.T_i_c[0].data());
+
+  for (const auto &kv : calib_corners) {
+    // Transformation from body (IMU) frame to world frame
+    Sophus::SE3d &T_w_i = vec_T_w_i[kv.first.frame_id];
+    problem.AddParameterBlock(T_w_i.data(), Sophus::SE3d::num_parameters,
+                              new Sophus::test::LocalParameterizationSE3);
+
+    // Transformation from camera to body (IMU) frame
+    Sophus::SE3d &T_i_c = calib_cam.T_i_c[kv.first.cam_id];
+    auto intrinsic = calib_cam.intrinsics[kv.first.cam_id];
+
+    for (size_t i = 0; i < kv.second.corners.size(); i++) {
+
+      // 3D coordinates of the aprilgrid corner in the world frame
+      // Not all corners are in images
+      Eigen::Vector2d p_2d = kv.second.corners[i];
+      size_t corner_idx = kv.second.corner_ids[i];
+      Eigen::Vector3d p_3d = aprilgrid.aprilgrid_corner_pos_3d[corner_idx];
+
+      ReprojectionCostFunctor *c =
+          new ReprojectionCostFunctor(p_2d, p_3d, cam_model);
+      ceres::CostFunction *cost_function =
+          new ceres::AutoDiffCostFunction<ReprojectionCostFunctor, 2,
+                                          Sophus::SE3d::num_parameters,
+                                          Sophus::SE3d::num_parameters, 8>(c);
+      problem.AddResidualBlock(cost_function, NULL, T_w_i.data(), T_i_c.data(),
+                               intrinsic->data());
+    }
+  }
 
   ceres::Solver::Options options;
   options.gradient_tolerance = 0.01 * Sophus::Constants<double>::epsilon();
