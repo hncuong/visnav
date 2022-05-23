@@ -238,6 +238,8 @@ void matchDescriptors(const std::vector<std::bitset<256>> &corner_descriptors_1,
   // TODO SHEET 3: match features
   int matches_1[corner_descriptors_1.size()];
   std::fill_n(matches_1, corner_descriptors_1.size(), -1);
+  int match1_cnt = 0;
+  int match2_cnt = 0;
 
   for (size_t i = 0; i < corner_descriptors_1.size(); i++) {
     auto desc_1 = corner_descriptors_1[i];
@@ -251,25 +253,23 @@ void matchDescriptors(const std::vector<std::bitset<256>> &corner_descriptors_1,
       auto diff = desc_1 ^ desc_2; // Xor
       auto distance = diff.count();
 
-      // Now check if this distance fulfill constrants
-      // Distance must < threshold
-      if (distance >= threshold)
-        continue;
-
       if (distance < smallest_dist) {
         // Update two best distance
         second_best_dist = smallest_dist;
         smallest_dist = distance;
         // Update match id
-        match_id = j;
+        // Distance must < threshold
+        if (distance < threshold)
+          match_id = j;
       } else if (distance < second_best_dist)
         second_best_dist = distance;
     }
 
     // Discard matches if the distance to the second best match is smaller than
     //    the smallest distance multiplied by dist 2 best.
-    if (second_best_dist >= dist_2_best * smallest_dist)
+    if (second_best_dist >= dist_2_best * smallest_dist) {
       matches_1[i] = match_id;
+    }
   }
 
   // Check if matches hold two side
@@ -282,21 +282,19 @@ void matchDescriptors(const std::vector<std::bitset<256>> &corner_descriptors_1,
 
     // For each descriptor in P, find descriptor in Q with smallest distance
     for (int i = 0; i < corner_descriptors_1.size(); i++) {
-      auto desc_1 = corner_descriptors_2[i];
+      auto desc_1 = corner_descriptors_1[i];
       auto diff = desc_1 ^ desc_2; // Xor
       auto distance = diff.count();
 
-      // Now check if this distance fulfill constrants
-      // Distance must < threshold
-      if (distance >= threshold)
-        continue;
-
+      // Update two best distance
       if (distance < smallest_dist) {
         // Update two best distance
         second_best_dist = smallest_dist;
         smallest_dist = distance;
         // Update match id
-        match_id = i;
+        // Distance must < threshold
+        if (distance < threshold)
+          match_id = i;
       } else if (distance < second_best_dist)
         second_best_dist = distance;
     }
