@@ -130,8 +130,8 @@ char pattern_31_y_b[256] = {
     -9,  -1,  -2,  -8,  5,   10,  5,   5,   11,  -6,  -12, 9,   4,   -2, -2,
     -11};
 
-void detectKeypoints(const pangolin::ManagedImage<uint8_t>& img_raw,
-                     KeypointsData& kd, int num_features) {
+void detectKeypoints(const pangolin::ManagedImage<uint8_t> &img_raw,
+                     KeypointsData &kd, int num_features) {
   cv::Mat image(img_raw.h, img_raw.w, CV_8U, img_raw.ptr);
 
   std::vector<cv::Point2f> points;
@@ -148,12 +148,12 @@ void detectKeypoints(const pangolin::ManagedImage<uint8_t>& img_raw,
   }
 }
 
-void computeAngles(const pangolin::ManagedImage<uint8_t>& img_raw,
-                   KeypointsData& kd, bool rotate_features) {
+void computeAngles(const pangolin::ManagedImage<uint8_t> &img_raw,
+                   KeypointsData &kd, bool rotate_features) {
   kd.corner_angles.resize(kd.corners.size());
 
   for (size_t i = 0; i < kd.corners.size(); i++) {
-    const Eigen::Vector2d& p = kd.corners[i];
+    const Eigen::Vector2d &p = kd.corners[i];
 
     const int cx = p[0];
     const int cy = p[1];
@@ -162,58 +162,153 @@ void computeAngles(const pangolin::ManagedImage<uint8_t>& img_raw,
 
     if (rotate_features) {
       // TODO SHEET 3: compute angle
-      UNUSED(img_raw);
-      UNUSED(cx);
-      UNUSED(cy);
+      int m01 = 0;
+      int m10 = 0;
+      for (int x = -HALF_PATCH_SIZE; x <= HALF_PATCH_SIZE; x++) {
+        for (int y = -HALF_PATCH_SIZE; y <= HALF_PATCH_SIZE; y++) {
+          if (x * x + y * y <= HALF_PATCH_SIZE * HALF_PATCH_SIZE) {
+            int ux = cx + x;
+            int uy = cy + y;
+            if (ux >= 0 && ux < img_raw.w && uy >= 0 && uy < img_raw.h) {
+              m01 += y * img_raw(ux, uy);
+              m10 += x * img_raw(ux, uy);
+            }
+          }
+        }
+      }
+      angle = atan2(m01, m10);
     }
 
     kd.corner_angles[i] = angle;
   }
 }
 
-void computeDescriptors(const pangolin::ManagedImage<uint8_t>& img_raw,
-                        KeypointsData& kd) {
+void computeDescriptors(const pangolin::ManagedImage<uint8_t> &img_raw,
+                        KeypointsData &kd) {
   kd.corner_descriptors.resize(kd.corners.size());
 
   for (size_t i = 0; i < kd.corners.size(); i++) {
     std::bitset<256> descriptor;
 
-    const Eigen::Vector2d& p = kd.corners[i];
+    const Eigen::Vector2d &p = kd.corners[i];
     const double angle = kd.corner_angles[i];
 
     const int cx = p[0];
     const int cy = p[1];
 
     // TODO SHEET 3: compute descriptor
-    UNUSED(img_raw);
-    UNUSED(angle);
-    UNUSED(cx);
-    UNUSED(cy);
+    for (size_t idx = 0; idx < 256; idx++) {
+      auto xa = pattern_31_x_a[idx];
+      auto ya = pattern_31_y_a[idx];
+      auto xb = pattern_31_x_b[idx];
+      auto yb = pattern_31_y_b[idx];
+      auto costheta = cos(angle);
+      auto sintheta = sin(angle);
+      // Rotation offset
+      auto xa_ = (int)(round(costheta * xa - sintheta * ya));
+      auto ya_ = (int)(round(sintheta * xa + costheta * ya));
+      auto xb_ = (int)(round(costheta * xb - sintheta * yb));
+      auto yb_ = (int)(round(sintheta * xb + costheta * yb));
+
+      //
+      if (img_raw(cx + xa_, cy + ya_) < img_raw(cx + xb_, cy + yb_))
+        descriptor[idx] = 1;
+      else
+        descriptor[idx] = 0;
+    }
 
     kd.corner_descriptors[i] = descriptor;
   }
 }
 
 void detectKeypointsAndDescriptors(
-    const pangolin::ManagedImage<uint8_t>& img_raw, KeypointsData& kd,
+    const pangolin::ManagedImage<uint8_t> &img_raw, KeypointsData &kd,
     int num_features, bool rotate_features) {
   detectKeypoints(img_raw, kd, num_features);
   computeAngles(img_raw, kd, rotate_features);
   computeDescriptors(img_raw, kd);
 }
 
-void matchDescriptors(const std::vector<std::bitset<256>>& corner_descriptors_1,
-                      const std::vector<std::bitset<256>>& corner_descriptors_2,
-                      std::vector<std::pair<int, int>>& matches, int threshold,
+void matchDescriptors(const std::vector<std::bitset<256>> &corner_descriptors_1,
+                      const std::vector<std::bitset<256>> &corner_descriptors_2,
+                      std::vector<std::pair<int, int>> &matches, int threshold,
                       double dist_2_best) {
   matches.clear();
 
   // TODO SHEET 3: match features
-  UNUSED(corner_descriptors_1);
-  UNUSED(corner_descriptors_2);
-  UNUSED(matches);
-  UNUSED(threshold);
-  UNUSED(dist_2_best);
+  int matches_1[corner_descriptors_1.size()];
+  std::fill_n(matches_1, corner_descriptors_1.size(), -1);
+
+  for (size_t i = 0; i < corner_descriptors_1.size(); i++) {
+    auto desc_1 = corner_descriptors_1[i];
+    size_t smallest_dist = 256;
+    size_t second_best_dist = smallest_dist;
+    int match_id = -1;
+
+    // For each descriptor in P, find descriptor in Q with smallest distance
+    for (size_t j = 0; j < corner_descriptors_2.size(); j++) {
+      auto desc_2 = corner_descriptors_2[j];
+      auto diff = desc_1 ^ desc_2; // Xor
+      auto distance = diff.count();
+
+      // Now check if this distance fulfill constrants
+      // Distance must < threshold
+      if (distance >= threshold)
+        continue;
+
+      if (distance < smallest_dist) {
+        // Update two best distance
+        second_best_dist = smallest_dist;
+        smallest_dist = distance;
+        // Update match id
+        match_id = j;
+      } else if (distance < second_best_dist)
+        second_best_dist = distance;
+    }
+
+    // Discard matches if the distance to the second best match is smaller than
+    //    the smallest distance multiplied by dist 2 best.
+    if (second_best_dist >= dist_2_best * smallest_dist)
+      matches_1[i] = match_id;
+  }
+
+  // Check if matches hold two side
+  // Repeat for each point in Q
+  for (int j = 0; j < corner_descriptors_2.size(); j++) {
+    auto desc_2 = corner_descriptors_2[j];
+    size_t smallest_dist = 256;
+    size_t second_best_dist = smallest_dist;
+    int match_id = -1;
+
+    // For each descriptor in P, find descriptor in Q with smallest distance
+    for (int i = 0; i < corner_descriptors_1.size(); i++) {
+      auto desc_1 = corner_descriptors_2[i];
+      auto diff = desc_1 ^ desc_2; // Xor
+      auto distance = diff.count();
+
+      // Now check if this distance fulfill constrants
+      // Distance must < threshold
+      if (distance >= threshold)
+        continue;
+
+      if (distance < smallest_dist) {
+        // Update two best distance
+        second_best_dist = smallest_dist;
+        smallest_dist = distance;
+        // Update match id
+        match_id = i;
+      } else if (distance < second_best_dist)
+        second_best_dist = distance;
+    }
+
+    // Discard matches if the distance to the second best match is smaller than
+    //    the smallest distance multiplied by dist 2 best.
+    if (second_best_dist >= dist_2_best * smallest_dist && match_id >= 0) {
+      // Check if matches agree with P
+      if (matches_1[match_id] == j)
+        matches.push_back(std::make_pair(match_id, j));
+    }
+  }
 }
 
-}  // namespace visnav
+} // namespace visnav
