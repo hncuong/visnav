@@ -238,8 +238,6 @@ void matchDescriptors(const std::vector<std::bitset<256>> &corner_descriptors_1,
   // TODO SHEET 3: match features
   int matches_1[corner_descriptors_1.size()];
   std::fill_n(matches_1, corner_descriptors_1.size(), -1);
-  int match1_cnt = 0;
-  int match2_cnt = 0;
 
   for (size_t i = 0; i < corner_descriptors_1.size(); i++) {
     auto desc_1 = corner_descriptors_1[i];
