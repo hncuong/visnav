@@ -42,6 +42,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <opengv/relative_pose/methods.hpp>
 #include <opengv/sac/Ransac.hpp>
 #include <opengv/sac_problems/relative_pose/CentralRelativePoseSacProblem.hpp>
+#include <opengv/types.hpp>
 
 #include <visnav/camera_models.h>
 #include <visnav/common_types.h>
@@ -103,11 +104,81 @@ void findInliersRansac(const KeypointsData &kd1, const KeypointsData &kd2,
   // was successful, you should do non-linear refinement of the model parameters
   // using all inliers, and then re-estimate the inlier set with the refined
   // model parameters.
-  UNUSED(kd1);
-  UNUSED(kd2);
-  UNUSED(cam1);
-  UNUSED(cam2);
-  UNUSED(ransac_thresh);
-  UNUSED(ransac_min_inliers);
+
+  // create the central relative adapter
+  // Create 3d vectors with unit norm as bearing vectors
+  opengv::bearingVectors_t bearingVectors1;
+  opengv::bearingVectors_t bearingVectors2;
+  for (size_t j = 0; j < md.matches.size(); j++) {
+    const Eigen::Vector2d p0_2d = kd1.corners[md.matches[j].first];
+    const Eigen::Vector2d p1_2d = kd2.corners[md.matches[j].second];
+
+    // TODO SHEET 3: determine inliers and store in md.inliers
+    Eigen::Vector3d p0_3d = cam1->unproject(p0_2d);
+    Eigen::Vector3d p1_3d = cam2->unproject(p1_2d);
+    bearingVectors1.push_back(p0_3d);
+    bearingVectors2.push_back(p1_3d);
+  }
+
+  // Create Ransac problem
+  opengv::relative_pose::CentralRelativeAdapter adapter(bearingVectors1,
+                                                        bearingVectors2);
+  // Ransac object
+  opengv::sac::Ransac<
+      opengv::sac_problems::relative_pose::CentralRelativePoseSacProblem>
+      ransac;
+  // Ransac problem
+  std::shared_ptr<
+      opengv::sac_problems::relative_pose::CentralRelativePoseSacProblem>
+      relposeproblem_ptr(
+          new opengv::sac_problems::relative_pose::
+              CentralRelativePoseSacProblem(
+                  adapter, opengv::sac_problems::relative_pose::
+                               CentralRelativePoseSacProblem::NISTER));
+
+  // run ransac
+  ransac.sac_model_ = relposeproblem_ptr;
+  ransac.threshold_ = ransac_thresh;
+  //  ransac.max_iterations_ = 100;
+  ransac.computeModel();
+  // get the result
+  opengv::transformation_t best_transformation =
+      ransac.model_coefficients_; // typedef Eigen::Matrix<double,3,4>
+
+  // Refine the model use all inlier
+  //  inliers = ransac.inliers_;
+  std::vector<int> inliers = ransac.inliers_;
+  // Create adaptor base on inliers
+  opengv::bearingVectors_t bearingVectors1_inliers;
+  opengv::bearingVectors_t bearingVectors2_inliers;
+  for (auto i : inliers) {
+    bearingVectors1_inliers.push_back(bearingVectors1[i]);
+    bearingVectors2_inliers.push_back(bearingVectors2[i]);
+  }
+
+  // Recompute model coeffs using
+  opengv::relative_pose::CentralRelativeAdapter adapter_inliers(
+      bearingVectors1_inliers, bearingVectors2_inliers);
+  adapter_inliers.sett12(best_transformation.block<3, 1>(0, 3));
+  adapter_inliers.setR12(best_transformation.block<3, 3>(0, 0));
+  opengv::transformation_t refined_transformation =
+      opengv::relative_pose::optimize_nonlinear(adapter_inliers);
+
+  // Re-estimate inlier set
+  ransac.sac_model_->selectWithinDistance(refined_transformation, ransac_thresh,
+                                          inliers);
+
+  // Check min_inliers and store inliers indices
+  if (inliers.size() >= ransac_min_inliers) {
+    for (auto i : inliers) {
+      md.inliers.push_back(md.matches[i]);
+    }
+  }
+  // Store final relative pose
+  Eigen::Vector3d t_0_1 = refined_transformation.block<3, 1>(0, 3)
+                              .normalized(); // Normalize translation
+  Eigen::Matrix3d R_0_1 = refined_transformation.block<3, 3>(0, 0);
+  md.T_i_j = Sophus::SE3d(R_0_1, t_0_1);
+  // Check order
 }
 } // namespace visnav
