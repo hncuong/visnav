@@ -49,8 +49,11 @@ class BowDatabase {
   inline void insert(const FrameCamId& fcid, const BowVector& bow_vector) {
     // TODO SHEET 3: add a bow_vector that corresponds to frame fcid to the
     // inverted index. You can assume the image hasn't been added before.
-    UNUSED(fcid);
-    UNUSED(bow_vector);
+    for (const auto& kv : bow_vector) {
+      auto word_id = kv.first;
+      auto weight = kv.second;
+      inverted_index[word_id].push_back(std::make_pair(fcid, weight));
+    }
   }
 
   inline void query(const BowVector& bow_vector, size_t num_results,
@@ -60,9 +63,42 @@ class BowDatabase {
     // to accumulate scores and std::partial_sort for getting the closest
     // results. You should use L1 difference as the distance measure. You can
     // assume that BoW descripors are L1 normalized.
-    UNUSED(bow_vector);
-    UNUSED(num_results);
-    UNUSED(results);
+
+    // Diff
+    std::unordered_map<FrameCamId, double> frame_diffs;
+
+    for (const auto& kv : bow_vector) {
+      auto word_id = kv.first;
+      auto weight = kv.second;
+
+      // Query Frame with
+      //      const auto &invertedIndex_ = this.getInvertedIndex();
+      for (const auto& frame_weight : inverted_index.at(word_id)) {
+        FrameCamId fcid = frame_weight.first;
+        double frame_word_weight = frame_weight.second;
+
+        // Now calculate l1 diff
+        // L1 diff of two L1 normalized vectors
+        double l1_diff = abs(weight - frame_word_weight) - abs(weight) -
+                         abs(frame_word_weight);
+        if (frame_diffs.find(fcid) == frame_diffs.end()) {
+          // First appear. Add 2
+          frame_diffs[fcid] = 2 + l1_diff;
+        } else {
+          frame_diffs[fcid] += l1_diff;
+        }
+      }
+    }
+
+    // Take only num_results
+    std::vector<std::pair<FrameCamId, double>> diff_list(frame_diffs.begin(),
+                                                         frame_diffs.end());
+    size_t num_returns = diff_list.size();
+    if (num_returns > num_results) num_returns = num_results;
+    std::partial_sort(
+        diff_list.begin(), diff_list.begin() + num_returns, diff_list.end(),
+        [](auto& left, auto& right) { return left.second < right.second; });
+    for (int i = 0; i < num_returns; i++) results.push_back(diff_list[i]);
   }
 
   void clear() { inverted_index.clear(); }

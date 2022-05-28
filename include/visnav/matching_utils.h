@@ -49,7 +49,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace visnav {
 
-void computeEssential(const Sophus::SE3d &T_0_1, Eigen::Matrix3d &E) {
+void computeEssential(const Sophus::SE3d& T_0_1, Eigen::Matrix3d& E) {
   const Eigen::Vector3d t_0_1 = T_0_1.translation();
   const Eigen::Matrix3d R_0_1 = T_0_1.rotationMatrix();
 
@@ -66,11 +66,11 @@ void computeEssential(const Sophus::SE3d &T_0_1, Eigen::Matrix3d &E) {
   E = R_0_1.transpose() * t_cross;
 }
 
-void findInliersEssential(const KeypointsData &kd1, const KeypointsData &kd2,
-                          const std::shared_ptr<AbstractCamera<double>> &cam1,
-                          const std::shared_ptr<AbstractCamera<double>> &cam2,
-                          const Eigen::Matrix3d &E,
-                          double epipolar_error_threshold, MatchData &md) {
+void findInliersEssential(const KeypointsData& kd1, const KeypointsData& kd2,
+                          const std::shared_ptr<AbstractCamera<double>>& cam1,
+                          const std::shared_ptr<AbstractCamera<double>>& cam2,
+                          const Eigen::Matrix3d& E,
+                          double epipolar_error_threshold, MatchData& md) {
   md.inliers.clear();
 
   for (size_t j = 0; j < md.matches.size(); j++) {
@@ -84,16 +84,15 @@ void findInliersEssential(const KeypointsData &kd1, const KeypointsData &kd2,
     // Epipolar constraint.
     // x1T * E * x0 = 0
     auto c = p1_3d.transpose() * E * p0_3d;
-    if (abs(c) < epipolar_error_threshold)
-      md.inliers.push_back(md.matches[j]);
+    if (abs(c) < epipolar_error_threshold) md.inliers.push_back(md.matches[j]);
   }
 }
 
-void findInliersRansac(const KeypointsData &kd1, const KeypointsData &kd2,
-                       const std::shared_ptr<AbstractCamera<double>> &cam1,
-                       const std::shared_ptr<AbstractCamera<double>> &cam2,
+void findInliersRansac(const KeypointsData& kd1, const KeypointsData& kd2,
+                       const std::shared_ptr<AbstractCamera<double>>& cam1,
+                       const std::shared_ptr<AbstractCamera<double>>& cam2,
                        const double ransac_thresh, const int ransac_min_inliers,
-                       MatchData &md) {
+                       MatchData& md) {
   md.inliers.clear();
   md.T_i_j = Sophus::SE3d();
 
@@ -143,7 +142,7 @@ void findInliersRansac(const KeypointsData &kd1, const KeypointsData &kd2,
   ransac.computeModel();
   // get the result
   opengv::transformation_t best_transformation =
-      ransac.model_coefficients_; // typedef Eigen::Matrix<double,3,4>
+      ransac.model_coefficients_;  // typedef Eigen::Matrix<double,3,4>
 
   // Refine the model use all inlier
   //  inliers = ransac.inliers_;
@@ -176,9 +175,9 @@ void findInliersRansac(const KeypointsData &kd1, const KeypointsData &kd2,
   }
   // Store final relative pose
   Eigen::Vector3d t_0_1 = refined_transformation.block<3, 1>(0, 3)
-                              .normalized(); // Normalize translation
+                              .normalized();  // Normalize translation
   Eigen::Matrix3d R_0_1 = refined_transformation.block<3, 3>(0, 0);
   md.T_i_j = Sophus::SE3d(R_0_1, t_0_1);
   // Check order
 }
-} // namespace visnav
+}  // namespace visnav

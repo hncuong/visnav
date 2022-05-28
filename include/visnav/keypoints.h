@@ -130,8 +130,8 @@ char pattern_31_y_b[256] = {
     -9,  -1,  -2,  -8,  5,   10,  5,   5,   11,  -6,  -12, 9,   4,   -2, -2,
     -11};
 
-void detectKeypoints(const pangolin::ManagedImage<uint8_t> &img_raw,
-                     KeypointsData &kd, int num_features) {
+void detectKeypoints(const pangolin::ManagedImage<uint8_t>& img_raw,
+                     KeypointsData& kd, int num_features) {
   cv::Mat image(img_raw.h, img_raw.w, CV_8U, img_raw.ptr);
 
   std::vector<cv::Point2f> points;
@@ -148,12 +148,12 @@ void detectKeypoints(const pangolin::ManagedImage<uint8_t> &img_raw,
   }
 }
 
-void computeAngles(const pangolin::ManagedImage<uint8_t> &img_raw,
-                   KeypointsData &kd, bool rotate_features) {
+void computeAngles(const pangolin::ManagedImage<uint8_t>& img_raw,
+                   KeypointsData& kd, bool rotate_features) {
   kd.corner_angles.resize(kd.corners.size());
 
   for (size_t i = 0; i < kd.corners.size(); i++) {
-    const Eigen::Vector2d &p = kd.corners[i];
+    const Eigen::Vector2d& p = kd.corners[i];
 
     const int cx = p[0];
     const int cy = p[1];
@@ -183,14 +183,14 @@ void computeAngles(const pangolin::ManagedImage<uint8_t> &img_raw,
   }
 }
 
-void computeDescriptors(const pangolin::ManagedImage<uint8_t> &img_raw,
-                        KeypointsData &kd) {
+void computeDescriptors(const pangolin::ManagedImage<uint8_t>& img_raw,
+                        KeypointsData& kd) {
   kd.corner_descriptors.resize(kd.corners.size());
 
   for (size_t i = 0; i < kd.corners.size(); i++) {
     std::bitset<256> descriptor;
 
-    const Eigen::Vector2d &p = kd.corners[i];
+    const Eigen::Vector2d& p = kd.corners[i];
     const double angle = kd.corner_angles[i];
 
     const int cx = p[0];
@@ -222,16 +222,16 @@ void computeDescriptors(const pangolin::ManagedImage<uint8_t> &img_raw,
 }
 
 void detectKeypointsAndDescriptors(
-    const pangolin::ManagedImage<uint8_t> &img_raw, KeypointsData &kd,
+    const pangolin::ManagedImage<uint8_t>& img_raw, KeypointsData& kd,
     int num_features, bool rotate_features) {
   detectKeypoints(img_raw, kd, num_features);
   computeAngles(img_raw, kd, rotate_features);
   computeDescriptors(img_raw, kd);
 }
 
-void matchDescriptors(const std::vector<std::bitset<256>> &corner_descriptors_1,
-                      const std::vector<std::bitset<256>> &corner_descriptors_2,
-                      std::vector<std::pair<int, int>> &matches, int threshold,
+void matchDescriptors(const std::vector<std::bitset<256>>& corner_descriptors_1,
+                      const std::vector<std::bitset<256>>& corner_descriptors_2,
+                      std::vector<std::pair<int, int>>& matches, int threshold,
                       double dist_2_best) {
   matches.clear();
 
@@ -248,7 +248,7 @@ void matchDescriptors(const std::vector<std::bitset<256>> &corner_descriptors_1,
     // For each descriptor in P, find descriptor in Q with smallest distance
     for (size_t j = 0; j < corner_descriptors_2.size(); j++) {
       auto desc_2 = corner_descriptors_2[j];
-      auto diff = desc_1 ^ desc_2; // Xor
+      auto diff = desc_1 ^ desc_2;  // Xor
       auto distance = diff.count();
 
       if (distance < smallest_dist) {
@@ -257,8 +257,7 @@ void matchDescriptors(const std::vector<std::bitset<256>> &corner_descriptors_1,
         smallest_dist = distance;
         // Update match id
         // Distance must < threshold
-        if (distance < threshold)
-          match_id = j;
+        if (distance < threshold) match_id = j;
       } else if (distance < second_best_dist)
         second_best_dist = distance;
     }
@@ -281,7 +280,7 @@ void matchDescriptors(const std::vector<std::bitset<256>> &corner_descriptors_1,
     // For each descriptor in P, find descriptor in Q with smallest distance
     for (int i = 0; i < corner_descriptors_1.size(); i++) {
       auto desc_1 = corner_descriptors_1[i];
-      auto diff = desc_1 ^ desc_2; // Xor
+      auto diff = desc_1 ^ desc_2;  // Xor
       auto distance = diff.count();
 
       // Update two best distance
@@ -291,8 +290,7 @@ void matchDescriptors(const std::vector<std::bitset<256>> &corner_descriptors_1,
         smallest_dist = distance;
         // Update match id
         // Distance must < threshold
-        if (distance < threshold)
-          match_id = i;
+        if (distance < threshold) match_id = i;
       } else if (distance < second_best_dist)
         second_best_dist = distance;
     }
@@ -307,4 +305,4 @@ void matchDescriptors(const std::vector<std::bitset<256>> &corner_descriptors_1,
   }
 }
 
-} // namespace visnav
+}  // namespace visnav

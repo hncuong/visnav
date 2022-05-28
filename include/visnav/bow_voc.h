@@ -65,9 +65,29 @@ class BowVocabulary {
     // feature and descriptor of the cluster centroid. Iterate until you reach
     // the leaf node. Save m_nodes[id].word_id and m_nodes[id].weight of the
     // leaf node to the corresponding variables.
-    UNUSED(feature);
-    UNUSED(word_id);
-    UNUSED(weight);
+    // Start node
+    int id = 0;
+    // Travel the tree until reaching a leaf
+    while (!m_nodes[id].isLeaf()) {
+      int best_distance = 257;
+      int best_id = -1;
+      for (auto child_id : m_nodes[id].children) {
+        // Calculate smllest distance
+        auto descriptor = m_nodes[child_id].descriptor;
+        auto distance = (feature ^ descriptor).count();
+        if (distance < best_distance) {
+          best_id = child_id;
+          best_distance = distance;
+        }
+      }
+
+      // Update next node
+      id = best_id;
+    }
+
+    // Save best
+    word_id = m_nodes[id].word_id;
+    weight = m_nodes[id].weight;
   }
 
   inline void transform(const std::vector<TDescriptor>& features,
@@ -81,7 +101,33 @@ class BowVocabulary {
     // TODO SHEET 3: transform the entire vector of features from an image to
     // the BoW representation (you can use transformFeatureToWord function). Use
     // L1 norm to normalize the resulting BoW vector.
-    UNUSED(features);
+    // Store word count
+    std::unordered_map<WordId, WordValue> word_count;
+    WordValue total_weight = 0.;
+
+    // Iterate
+    for (const TDescriptor& feature : features) {
+      WordId word_id;
+      WordValue weight;
+      transformFeatureToWord(feature, word_id, weight);
+      if (weight == 0.) continue;
+
+      if (word_count.find(word_id) == word_count.end()) {
+        word_count[word_id] = weight;
+      } else {
+        word_count[word_id] += weight;
+      }
+      total_weight += weight;
+    }
+
+    double weight_sum = 0.;
+    //
+    for (auto w_w : word_count) {
+      WordId word_id = w_w.first;
+      WordValue weight_norm = w_w.second / total_weight;
+      weight_sum += weight_norm;
+      v.push_back(std::make_pair(word_id, weight_norm));
+    }
   }
 
   void save(const std::string& filename) const {
