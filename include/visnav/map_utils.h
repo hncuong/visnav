@@ -36,6 +36,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <thread>
 
 #include <ceres/ceres.h>
+#include <sophus/se3.hpp>
 
 #include <opengv/absolute_pose/CentralAbsoluteAdapter.hpp>
 #include <opengv/absolute_pose/methods.hpp>
@@ -391,12 +392,67 @@ void bundle_adjustment(const Corners &feature_corners,
   ceres::Problem problem;
 
   // TODO SHEET 4: Setup optimization problem
-  UNUSED(feature_corners);
-  UNUSED(options);
-  UNUSED(fixed_cameras);
-  UNUSED(calib_cam);
-  UNUSED(cameras);
-  UNUSED(landmarks);
+  // Add Params Block and Set Constant for Intrinsics
+  // Then Add Param Block for all Camera poses + 3D landmarks
+  // Set Camera in fixed_cameras to Constant
+  problem.AddParameterBlock(calib_cam.intrinsics.at(0)->data(), 8);
+  problem.AddParameterBlock(calib_cam.intrinsics.at(1)->data(), 8);
+  if (!options.optimize_intrinsics) {
+    problem.SetParameterBlockConstant(calib_cam.intrinsics.at(0)->data());
+    problem.SetParameterBlockConstant(calib_cam.intrinsics.at(1)->data());
+  }
+
+  // For each Camera pose
+  for (auto &kv : cameras) {
+    problem.AddParameterBlock(kv.second.T_w_c.data(),
+                              Sophus::SE3d::num_parameters,
+                              new Sophus::test::LocalParameterizationSE3);
+  }
+  for (const auto &fcid : fixed_cameras) {
+    problem.SetParameterBlockConstant(cameras.at(fcid).T_w_c.data());
+  }
+
+  // For each 3D landmark
+  for (auto &kv : landmarks) {
+    problem.AddParameterBlock(kv.second.p.data(), 3);
+  }
+
+  // Add residual blocks
+  // For each landmark: trackid ->
+  // Look for it feature track: fcid ->
+  for (auto &kv : landmarks) {
+    auto &p_3d = kv.second.p;
+    const auto &lm = kv.second.obs;
+
+    for (const auto &fcid_featureId : lm) {
+      // Get respected Pose of Cam and 2d point
+      // And intrinsic
+      const auto &fcid = fcid_featureId.first;
+      const auto &featureId = fcid_featureId.second;
+
+      auto &T_w_c = cameras.at(fcid).T_w_c;
+      const auto &p_2d = feature_corners.at(fcid).corners.at(featureId);
+      auto &intrinsic = calib_cam.intrinsics.at(fcid.cam_id);
+      const auto &cam_model = intrinsic->name();
+
+      // TODO Check How to Get Cam mode
+      BundleAdjustmentReprojectionCostFunctor *c =
+          new BundleAdjustmentReprojectionCostFunctor(p_2d, cam_model);
+      ceres::CostFunction *cost_function = new ceres::AutoDiffCostFunction<
+          BundleAdjustmentReprojectionCostFunctor, 2,
+          Sophus::SE3d::num_parameters, 3, 8>(c);
+      // TODO Huber loss for regularize
+      //      ceres::LossFunction* lost_function = nullptr;
+      if (options.use_huber) {
+        problem.AddResidualBlock(cost_function,
+                                 new ceres::HuberLoss(options.huber_parameter),
+                                 T_w_c.data(), p_3d.data(), intrinsic->data());
+      } else {
+        problem.AddResidualBlock(cost_function, NULL, T_w_c.data(), p_3d.data(),
+                                 intrinsic->data());
+      }
+    }
+  }
 
   // Solve
   ceres::Solver::Options ceres_options;

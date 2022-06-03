@@ -41,19 +41,18 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace visnav {
 
-template <class T>
-class AbstractCamera;
+template <class T> class AbstractCamera;
 
 struct ReprojectionCostFunctor {
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-  ReprojectionCostFunctor(const Eigen::Vector2d& p_2d,
-                          const Eigen::Vector3d& p_3d,
-                          const std::string& cam_model)
+  ReprojectionCostFunctor(const Eigen::Vector2d &p_2d,
+                          const Eigen::Vector3d &p_3d,
+                          const std::string &cam_model)
       : p_2d(p_2d), p_3d(p_3d), cam_model(cam_model) {}
 
   template <class T>
-  bool operator()(T const* const sT_w_i, T const* const sT_i_c,
-                  T const* const sIntr, T* sResiduals) const {
+  bool operator()(T const *const sT_w_i, T const *const sT_i_c,
+                  T const *const sIntr, T *sResiduals) const {
     Eigen::Map<Sophus::SE3<T> const> const T_w_i(sT_w_i);
     Eigen::Map<Sophus::SE3<T> const> const T_i_c(sT_i_c);
 
@@ -62,9 +61,7 @@ struct ReprojectionCostFunctor {
         AbstractCamera<T>::from_data(cam_model, sIntr);
 
     // TODO SHEET 2: implement the rest of the functor
-    // Camera to world
-    // TODO Is Convert p_3d to T type needed
-    //    Eigen::Matrix<T, 3, 1> p_3w = T_w_i.inverse() * p_3d;
+    // Camera to world +
     // Camera to other camera
     Eigen::Matrix<T, 3, 1> p_3c = T_i_c.inverse() * T_w_i.inverse() * p_3d;
     // Use intrinsic (aka camera model) to project to 2d
@@ -73,7 +70,7 @@ struct ReprojectionCostFunctor {
 
     // Compute the residuals
     residuals = p_2d.cast<T>() -
-                p_2d_projected;  // Detected corners vs projected corners
+                p_2d_projected; // Detected corners vs projected corners
     return true;
   }
 
@@ -84,13 +81,13 @@ struct ReprojectionCostFunctor {
 
 struct BundleAdjustmentReprojectionCostFunctor {
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-  BundleAdjustmentReprojectionCostFunctor(const Eigen::Vector2d& p_2d,
-                                          const std::string& cam_model)
+  BundleAdjustmentReprojectionCostFunctor(const Eigen::Vector2d &p_2d,
+                                          const std::string &cam_model)
       : p_2d(p_2d), cam_model(cam_model) {}
 
   template <class T>
-  bool operator()(T const* const sT_w_c, T const* const sp_3d_w,
-                  T const* const sIntr, T* sResiduals) const {
+  bool operator()(T const *const sT_w_c, T const *const sp_3d_w,
+                  T const *const sIntr, T *sResiduals) const {
     // map inputs
     Eigen::Map<Sophus::SE3<T> const> const T_w_c(sT_w_c);
     Eigen::Map<Eigen::Matrix<T, 3, 1> const> const p_3d_w(sp_3d_w);
@@ -99,6 +96,12 @@ struct BundleAdjustmentReprojectionCostFunctor {
         AbstractCamera<T>::from_data(cam_model, sIntr);
 
     // TODO SHEET 4: Compute reprojection error
+    // Transform to camera coordinate and then to image space
+    Eigen::Matrix<T, 3, 1> p_3d_c = T_w_c.inverse() * p_3d_w;
+    Eigen::Matrix<T, 2, 1> p_2d_c = cam->project(p_3d_c);
+
+    // Residuals
+    residuals = p_2d.cast<T>() - p_2d_c;
 
     return true;
   }
@@ -107,4 +110,4 @@ struct BundleAdjustmentReprojectionCostFunctor {
   std::string cam_model;
 };
 
-}  // namespace visnav
+} // namespace visnav
