@@ -73,19 +73,23 @@ class BowDatabase {
 
       // Query Frame with
       //      const auto &invertedIndex_ = this.getInvertedIndex();
-      for (const auto& frame_weight : inverted_index.at(word_id)) {
-        FrameCamId fcid = frame_weight.first;
-        double frame_word_weight = frame_weight.second;
+      if (inverted_index.count(word_id) > 0) {
+        for (const auto& frame_weight : inverted_index.at(word_id)) {
+          FrameCamId fcid = frame_weight.first;
+          double frame_word_weight = frame_weight.second;
 
-        // Now calculate l1 diff
-        // L1 diff of two L1 normalized vectors
-        double l1_diff = abs(weight - frame_word_weight) - abs(weight) -
-                         abs(frame_word_weight);
-        if (frame_diffs.find(fcid) == frame_diffs.end()) {
-          // First appear. Add 2
-          frame_diffs[fcid] = 2 + l1_diff;
-        } else {
-          frame_diffs[fcid] += l1_diff;
+          // Now calculate l1 diff
+          // L1 diff of two L1 normalized vectors
+          double l1_diff = abs(weight - frame_word_weight) - abs(weight) -
+                           abs(frame_word_weight);
+          if (frame_diffs.count(fcid) == 0) {
+            // First appear. Add 2
+            frame_diffs.emplace(fcid, 2 + l1_diff);
+            //          frame_diffs[fcid] = 2 + l1_diff;
+          } else {
+            //          frame_diffs[fcid] += l1_diff;
+            frame_diffs.at(fcid) += l1_diff;
+          }
         }
       }
     }
