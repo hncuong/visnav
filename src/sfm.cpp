@@ -71,10 +71,10 @@ using namespace visnav;
 /// Declarations
 ///////////////////////////////////////////////////////////////////////////////
 
-void draw_image_overlay(pangolin::View &v, size_t view_id);
-void change_display_to_image(const FrameCamId &fcid);
+void draw_image_overlay(pangolin::View& v, size_t view_id);
+void change_display_to_image(const FrameCamId& fcid);
 void draw_scene();
-void load_data(const std::string &path, const std::string &calib_path,
+void load_data(const std::string& path, const std::string& calib_path,
                int max_frames = 0);
 void save_map();
 void load_map();
@@ -231,9 +231,8 @@ pangolin::Var<int> minimal_inlier_max_cameras_to_add("hidden.min_max_cam", 2, 1,
 pangolin::Var<bool> always_add_all_observations("hidden.add_loc_outlier", false,
                                                 true);
 
-pangolin::Var<double>
-    reprojection_error_pnp_inlier_threshold_pixel("hidden.pnp_inlier_thresh",
-                                                  3.0, 0.1, 10);
+pangolin::Var<double> reprojection_error_pnp_inlier_threshold_pixel(
+    "hidden.pnp_inlier_thresh", 3.0, 0.1, 10);
 
 //////////////////////////////////////////////
 /// Bundle Adjustment Options
@@ -252,15 +251,12 @@ pangolin::Var<double> reprojection_error_huber_pixel("hidden.ba_huber_width",
 // scene with a metric distance between the initial stereo pair from camera
 // calibration.
 
-pangolin::Var<double>
-    reprojection_error_outlier_threshold_normal_pixel("hidden.outlier_repr",
-                                                      3.0, 0.1, 10);
-pangolin::Var<double>
-    reprojection_error_outlier_threshold_huge_pixel("hidden.outlier_repr_huge",
-                                                    40.0, 0.1, 100);
-pangolin::Var<double>
-    camera_center_distance_outlier_threshold_meter("hidden.outlier_dist", 0.1,
-                                                   0.0, 1.0);
+pangolin::Var<double> reprojection_error_outlier_threshold_normal_pixel(
+    "hidden.outlier_repr", 3.0, 0.1, 10);
+pangolin::Var<double> reprojection_error_outlier_threshold_huge_pixel(
+    "hidden.outlier_repr_huge", 40.0, 0.1, 100);
+pangolin::Var<double> camera_center_distance_outlier_threshold_meter(
+    "hidden.outlier_dist", 0.1, 0.0, 1.0);
 pangolin::Var<double> z_coordinate_outlier_threshold_meter("hidden.outlier_z",
                                                            0.05, -1.0, 1.0);
 
@@ -314,7 +310,7 @@ Button load_map_btn("ui.load_map", &load_map);
 
 // Parse parameters, load data, and create GUI window and event loop (or
 // process everything in non-gui mode).
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
   bool show_gui = true;
   std::string dataset_path;
   std::string voc_path;
@@ -334,7 +330,7 @@ int main(int argc, char **argv) {
 
   try {
     app.parse(argc, argv);
-  } catch (const CLI::ParseError &e) {
+  } catch (const CLI::ParseError& e) {
     return app.exit(e);
   }
 
@@ -351,13 +347,13 @@ int main(int argc, char **argv) {
     glEnable(GL_DEPTH_TEST);
 
     // main parent display for images and 3d viewer
-    pangolin::View &main_view =
+    pangolin::View& main_view =
         pangolin::Display("main")
             .SetBounds(0.0, 1.0, pangolin::Attach::Pix(UI_WIDTH), 1.0)
             .SetLayout(pangolin::LayoutEqualVertical);
 
     // parent display for images
-    pangolin::View &img_view_display =
+    pangolin::View& img_view_display =
         pangolin::Display("images").SetLayout(pangolin::LayoutEqual);
     main_view.AddDisplay(img_view_display);
 
@@ -366,7 +362,7 @@ int main(int argc, char **argv) {
                                           pangolin::Attach::Pix(UI_WIDTH));
 
     // extra options panel
-    pangolin::View &hidden_panel = pangolin::CreatePanel("hidden").SetBounds(
+    pangolin::View& hidden_panel = pangolin::CreatePanel("hidden").SetBounds(
         0.0, 1.0, pangolin::Attach::Pix(UI_WIDTH),
         pangolin::Attach::Pix(2 * UI_WIDTH));
     ui_show_hidden.Meta().gui_changed = true;
@@ -390,7 +386,7 @@ int main(int argc, char **argv) {
         pangolin::ModelViewLookAt(-3.4, -3.7, -8.3, 2.1, 0.6, 0.2,
                                   pangolin::AxisNegY));
 
-    pangolin::View &display3D =
+    pangolin::View& display3D =
         pangolin::Display("scene")
             .SetAspect(-640 / 480.0)
             .SetHandler(new pangolin::Handler3D(camera));
@@ -406,7 +402,7 @@ int main(int argc, char **argv) {
       }
 
       display3D.Activate(camera);
-      glClearColor(0.95f, 0.95f, 0.95f, 1.0f); // light gray background
+      glClearColor(0.95f, 0.95f, 0.95f, 1.0f);  // light gray background
 
       draw_scene();
 
@@ -485,7 +481,7 @@ int main(int argc, char **argv) {
 }
 
 // Visualize features and related info on top of the image views
-void draw_image_overlay(pangolin::View &v, size_t view_id) {
+void draw_image_overlay(pangolin::View& v, size_t view_id) {
   UNUSED(v);
 
   auto frame_id =
@@ -498,12 +494,12 @@ void draw_image_overlay(pangolin::View &v, size_t view_id) {
 
   if (show_detected) {
     glLineWidth(1.0);
-    glColor3f(1.0, 0.0, 0.0); // red
+    glColor3f(1.0, 0.0, 0.0);  // red
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     if (feature_corners.find(fcid) != feature_corners.end()) {
-      const KeypointsData &cr = feature_corners.at(fcid);
+      const KeypointsData& cr = feature_corners.at(fcid);
 
       for (size_t i = 0; i < cr.corners.size(); i++) {
         Eigen::Vector2d c = cr.corners[i];
@@ -531,7 +527,7 @@ void draw_image_overlay(pangolin::View &v, size_t view_id) {
 
   if (show_matches || show_inliers) {
     glLineWidth(1.0);
-    glColor3f(0.0, 0.0, 1.0); // blue
+    glColor3f(0.0, 0.0, 1.0);  // blue
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -556,7 +552,7 @@ void draw_image_overlay(pangolin::View &v, size_t view_id) {
 
     if (idx >= 0 && show_matches) {
       if (feature_corners.find(fcid) != feature_corners.end()) {
-        const KeypointsData &cr = feature_corners.at(fcid);
+        const KeypointsData& cr = feature_corners.at(fcid);
 
         for (size_t i = 0; i < it->second.matches.size(); i++) {
           size_t c_idx = idx == 0 ? it->second.matches[i].first
@@ -584,11 +580,11 @@ void draw_image_overlay(pangolin::View &v, size_t view_id) {
       }
     }
 
-    glColor3f(0.0, 1.0, 0.0); // green
+    glColor3f(0.0, 1.0, 0.0);  // green
 
     if (idx >= 0 && show_inliers) {
       if (feature_corners.find(fcid) != feature_corners.end()) {
-        const KeypointsData &cr = feature_corners.at(fcid);
+        const KeypointsData& cr = feature_corners.at(fcid);
 
         for (size_t i = 0; i < it->second.inliers.size(); i++) {
           size_t c_idx = idx == 0 ? it->second.inliers[i].first
@@ -619,12 +615,12 @@ void draw_image_overlay(pangolin::View &v, size_t view_id) {
 
   if (show_tracks) {
     glLineWidth(1.0);
-    glColor3f(0.0, 0.4, 0.4); // dark teal
+    glColor3f(0.0, 0.4, 0.4);  // dark teal
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     if (feature_corners.find(fcid) != feature_corners.end()) {
-      const KeypointsData &cr = feature_corners.at(fcid);
+      const KeypointsData& cr = feature_corners.at(fcid);
       if (!(feature_tracks.empty() && outlier_tracks.empty())) {
         std::vector<TrackId> track_ids;
         std::vector<TrackId> outlier_track_ids;
@@ -639,15 +635,15 @@ void draw_image_overlay(pangolin::View &v, size_t view_id) {
             // highlight tracks already in map
             if (landmarks.at(track_id).outlier_obs.count(fcid) > 0) {
               // track contained in map, but this observation is outlier
-              glColor3f(0.9, 0.0, 0.9); // purple
+              glColor3f(0.9, 0.0, 0.9);  // purple
               ++num_outlier_obs;
             } else {
-              glColor3f(0.0, 0.9, 0.9); // bright teal
+              glColor3f(0.0, 0.9, 0.9);  // bright teal
               ++num_obs;
             }
           } else {
             // not yet in map
-            glColor3f(0.0, 0.4, 0.4); // dark teal
+            glColor3f(0.0, 0.4, 0.4);  // dark teal
           }
           const FeatureId feature_id = feature_tracks.at(track_id).at(fcid);
           const Eigen::Vector2d c = cr.corners[feature_id];
@@ -666,7 +662,7 @@ void draw_image_overlay(pangolin::View &v, size_t view_id) {
         }
 
         // outliers gray
-        glColor3f(0.5, 0.5, 0.5); // grey
+        glColor3f(0.5, 0.5, 0.5);  // grey
         for (TrackId track_id : outlier_track_ids) {
           const FeatureId feature_id = outlier_tracks.at(track_id).at(fcid);
           const Eigen::Vector2d c = cr.corners[feature_id];
@@ -677,12 +673,13 @@ void draw_image_overlay(pangolin::View &v, size_t view_id) {
           }
         }
 
-        glColor3f(0.0, 0.4, 0.4); // dark teal
+        glColor3f(0.0, 0.4, 0.4);  // dark teal
         pangolin::GlFont::I()
-            .Text("Contains %u tracks (%u obs, %u outlier obs, %u removed "
-                  "outliers)",
-                  track_ids.size() + outlier_track_ids.size(), num_obs,
-                  num_outlier_obs, outlier_track_ids.size())
+            .Text(
+                "Contains %u tracks (%u obs, %u outlier obs, %u removed "
+                "outliers)",
+                track_ids.size() + outlier_track_ids.size(), num_obs,
+                num_outlier_obs, outlier_track_ids.size())
             .Draw(5, text_row);
       } else {
         glLineWidth(1.0);
@@ -700,7 +697,7 @@ void draw_image_overlay(pangolin::View &v, size_t view_id) {
   if (show_reprojections) {
     if (image_projections.count(fcid) > 0) {
       glLineWidth(1.0);
-      glColor3f(1.0, 0.0, 0.0); // red
+      glColor3f(1.0, 0.0, 0.0);  // red
       glEnable(GL_BLEND);
       glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -709,20 +706,20 @@ void draw_image_overlay(pangolin::View &v, size_t view_id) {
       size_t num_outliers = 0;
 
       // count up and draw all inlier projections
-      for (const auto &lm_proj : image_projections.at(fcid).obs) {
+      for (const auto& lm_proj : image_projections.at(fcid).obs) {
         error_sum += lm_proj->reprojection_error;
 
         if (lm_proj->outlier_flags != OutlierNone) {
           // outlier point
-          glColor3f(1.0, 0.0, 0.0); // red
+          glColor3f(1.0, 0.0, 0.0);  // red
           ++num_outliers;
         } else if (lm_proj->reprojection_error >
                    reprojection_error_huber_pixel) {
           // close to outlier point
-          glColor3f(1.0, 0.5, 0.0); // orange
+          glColor3f(1.0, 0.5, 0.0);  // orange
         } else {
           // clear inlier point
-          glColor3f(1.0, 1.0, 0.0); // yellow
+          glColor3f(1.0, 1.0, 0.0);  // yellow
         }
         pangolin::glDrawCirclePerimeter(lm_proj->point_reprojected, 3.0);
         pangolin::glDrawLine(lm_proj->point_measured,
@@ -731,15 +728,15 @@ void draw_image_overlay(pangolin::View &v, size_t view_id) {
 
       // only draw outlier projections
       if (show_outlier_observations) {
-        glColor3f(1.0, 0.0, 0.0); // red
-        for (const auto &lm_proj : image_projections.at(fcid).outlier_obs) {
+        glColor3f(1.0, 0.0, 0.0);  // red
+        for (const auto& lm_proj : image_projections.at(fcid).outlier_obs) {
           pangolin::glDrawCirclePerimeter(lm_proj->point_reprojected, 3.0);
           pangolin::glDrawLine(lm_proj->point_measured,
                                lm_proj->point_reprojected);
         }
       }
 
-      glColor3f(1.0, 0.0, 0.0); // red
+      glColor3f(1.0, 0.0, 0.0);  // red
       pangolin::GlFont::I()
           .Text("Average repr. error (%u points, %u new outliers): %.2f",
                 num_points, num_outliers, error_sum / num_points)
@@ -750,7 +747,7 @@ void draw_image_overlay(pangolin::View &v, size_t view_id) {
 
   if (show_epipolar) {
     glLineWidth(1.0);
-    glColor3f(0.0, 1.0, 1.0); // bright teal
+    glColor3f(0.0, 1.0, 1.0);  // bright teal
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -783,8 +780,7 @@ void draw_image_overlay(pangolin::View &v, size_t view_id) {
       for (double i = -M_PI_2 / 2; i <= M_PI_2 / 2; i += 0.05) {
         Eigen::Vector3d p1(0, sin(i), cos(i));
 
-        if (idx == 0)
-          p1 = it->second.T_i_j * p1;
+        if (idx == 0) p1 = it->second.T_i_j * p1;
 
         p1.normalize();
 
@@ -806,7 +802,7 @@ void draw_image_overlay(pangolin::View &v, size_t view_id) {
 }
 
 // Update the image views to a given image id
-void change_display_to_image(const FrameCamId &fcid) {
+void change_display_to_image(const FrameCamId& fcid) {
   if (0 == fcid.cam_id) {
     // left view
     show_cam1 = 0;
@@ -827,18 +823,18 @@ void draw_scene() {
   const FrameCamId fcid1(show_frame1, show_cam1);
   const FrameCamId fcid2(show_frame2, show_cam2);
 
-  const u_int8_t color_camera_left[3]{0, 125, 0};           // dark green
-  const u_int8_t color_camera_right[3]{0, 0, 125};          // dark blue
-  const u_int8_t color_points[3]{0, 0, 0};                  // black
-  const u_int8_t color_selected_left[3]{0, 250, 0};         // green
-  const u_int8_t color_selected_right[3]{0, 0, 250};        // blue
-  const u_int8_t color_selected_both[3]{0, 250, 250};       // teal
-  const u_int8_t color_outlier_points[3]{250, 0, 0};        // red
-  const u_int8_t color_outlier_observation[3]{250, 0, 250}; // purple
+  const u_int8_t color_camera_left[3]{0, 125, 0};            // dark green
+  const u_int8_t color_camera_right[3]{0, 0, 125};           // dark blue
+  const u_int8_t color_points[3]{0, 0, 0};                   // black
+  const u_int8_t color_selected_left[3]{0, 250, 0};          // green
+  const u_int8_t color_selected_right[3]{0, 0, 250};         // blue
+  const u_int8_t color_selected_both[3]{0, 250, 250};        // teal
+  const u_int8_t color_outlier_points[3]{250, 0, 0};         // red
+  const u_int8_t color_outlier_observation[3]{250, 0, 250};  // purple
 
   // render cameras
   if (show_cameras3d) {
-    for (const auto &cam : cameras) {
+    for (const auto& cam : cameras) {
       if (cam.first == fcid1) {
         render_camera(cam.second.T_w_c.matrix(), 3.0f, color_selected_left,
                       0.1f);
@@ -858,7 +854,7 @@ void draw_scene() {
   if (show_points3d && landmarks.size() > 0) {
     glPointSize(3.0);
     glBegin(GL_POINTS);
-    for (const auto &kv_lm : landmarks) {
+    for (const auto& kv_lm : landmarks) {
       const TrackId track_id = kv_lm.first;
 
       const bool in_cam_1 = kv_lm.second.obs.count(fcid1) > 0;
@@ -890,7 +886,7 @@ void draw_scene() {
 // Load images, calibration, and features / matches if available.
 // If max_frames > 0, load at most that many frames (each frame consists of
 // NUM_CAMS images)
-void load_data(const std::string &dataset_path, const std::string &calib_path,
+void load_data(const std::string& dataset_path, const std::string& calib_path,
                const int max_frames) {
   const std::string timestams_path = dataset_path + "/timestamps.txt";
 
@@ -943,7 +939,7 @@ void load_data(const std::string &dataset_path, const std::string &calib_path,
 
       if (calib_cam.intrinsics.size() >= NUM_CAMS) {
         std::cout << "Loaded camera from " << calib_path << " with models ";
-        for (const auto &cam : calib_cam.intrinsics) {
+        for (const auto& cam : calib_cam.intrinsics) {
           std::cout << cam->name() << " ";
         }
         std::cout << std::endl;
@@ -988,7 +984,7 @@ void load_data(const std::string &dataset_path, const std::string &calib_path,
       cereal::BinaryInputArchive archive(os);
       archive(feature_matches);
       std::set<FrameCamId> fcids_matches;
-      for (const auto &kv : feature_matches) {
+      for (const auto& kv : feature_matches) {
         fcids_matches.insert(kv.first.first);
         fcids_matches.insert(kv.first.second);
       }
@@ -1074,25 +1070,25 @@ void clear_map() {
 // reconstruction stage to string for output
 std::string stage_to_str(const CameraCandidates::Stage stage) {
   switch (stage) {
-  case CameraCandidates::ComputeCandidates:
-    return "select new camera candidates";
-  case CameraCandidates::AddCameras:
-    return "add cameras";
-  case CameraCandidates::AddLandmarks:
-    return "add landmarks";
-  case CameraCandidates::Optimize:
-    return "optimize";
-  case CameraCandidates::RemoveOutliers:
-    return "remove outliers";
-  case CameraCandidates::Done:
-    return "admire the result";
+    case CameraCandidates::ComputeCandidates:
+      return "select new camera candidates";
+    case CameraCandidates::AddCameras:
+      return "add cameras";
+    case CameraCandidates::AddLandmarks:
+      return "add landmarks";
+    case CameraCandidates::Optimize:
+      return "optimize";
+    case CameraCandidates::RemoveOutliers:
+      return "remove outliers";
+    case CameraCandidates::Done:
+      return "admire the result";
   }
 
   return "Unreachable!";
 }
 
 // print the next suggested step on console if enabled
-void print_proceed_to(const std::string &str) {
+void print_proceed_to(const std::string& str) {
   if (show_next_step_hint) {
     std::cerr << "Proceed to " << str << "." << std::endl;
   }
@@ -1126,6 +1122,7 @@ bool next_step() {
 
   if (feature_matches.empty()) {
     match_stereo();
+    //    use_match_bow = true; To use match stereo in Command line
     if (use_match_bow) {
       match_bow();
     } else {
@@ -1145,25 +1142,25 @@ bool next_step() {
   }
 
   switch (camera_candidates.current_stage) {
-  case CameraCandidates::ComputeCandidates:
-    compute_camera_candidate_set();
-    return true;
-  case CameraCandidates::AddCameras:
-    add_next_camera();
-    return true;
-  case CameraCandidates::AddLandmarks:
-    add_new_landmarks();
-    return true;
-  case CameraCandidates::Optimize:
-    optimize();
-    return true;
-  case CameraCandidates::RemoveOutliers:
-    remove_outlier_landmarks();
-    return true;
-  case CameraCandidates::Done:
-    summary();
-    // the end
-    return false;
+    case CameraCandidates::ComputeCandidates:
+      compute_camera_candidate_set();
+      return true;
+    case CameraCandidates::AddCameras:
+      add_next_camera();
+      return true;
+    case CameraCandidates::AddLandmarks:
+      add_new_landmarks();
+      return true;
+    case CameraCandidates::Optimize:
+      optimize();
+      return true;
+    case CameraCandidates::RemoveOutliers:
+      remove_outlier_landmarks();
+      return true;
+    case CameraCandidates::Done:
+      summary();
+      // the end
+      return false;
   }
 
   std::cerr << "Unreachable!" << std::endl;
@@ -1175,7 +1172,7 @@ void summary() {
   size_t num_obs = 0;
   size_t num_outlier_obs = 0;
 
-  for (const auto &kv : landmarks) {
+  for (const auto& kv : landmarks) {
     num_obs += kv.second.obs.size();
     num_outlier_obs += kv.second.outlier_obs.size();
   }
@@ -1195,7 +1192,7 @@ void summary() {
 void detect_keypoints() {
   clear_keypoints();
 
-  for (const auto &kv : images) {
+  for (const auto& kv : images) {
     KeypointsData kd;
 
     detectKeypointsAndDescriptors(kv.second, kd, num_features_per_image,
@@ -1241,14 +1238,13 @@ void match_stereo() {
     MatchData md;
     md.T_i_j = T_0_1;
 
-    const KeypointsData &kd1 = feature_corners[fcid1];
-    const KeypointsData &kd2 = feature_corners[fcid2];
+    const KeypointsData& kd1 = feature_corners[fcid1];
+    const KeypointsData& kd2 = feature_corners[fcid2];
 
     matchDescriptors(kd1.corner_descriptors, kd2.corner_descriptors, md.matches,
                      feature_match_max_dist, feature_match_test_next_best);
 
     num_matches += md.matches.size();
-    std::cout << "num_matches " << num_matches << "\n";
 
     findInliersEssential(kd1, kd2, calib_cam.intrinsics[0],
                          calib_cam.intrinsics[1], E, 1e-3, md);
@@ -1258,6 +1254,7 @@ void match_stereo() {
     // Need to check if other update is correct
     //    feature_matches[std::make_pair(fcid1, fcid2)] = md;
     feature_matches.insert(std::make_pair(std::make_pair(fcid1, fcid2), md));
+    //    feature_matches.emplace(std::make_pair(fcid1, fcid2), md);
   }
 
   std::cerr << "Matched " << num_images << " stereo pairs with " << num_inliers
@@ -1285,16 +1282,14 @@ void match_all() {
 
   std::vector<FrameCamId> keys;
 
-  for (const auto &kv : images)
-    keys.push_back(kv.first);
+  for (const auto& kv : images) keys.push_back(kv.first);
 
   std::vector<std::pair<int, int>> ids_to_match;
 
   for (size_t i = 0; i < keys.size(); i++) {
     for (size_t j = 0; j < i; j++) {
       // Do not add stereo pairs (have same timestamp)
-      if (keys[i].frame_id != keys[j].frame_id)
-        ids_to_match.emplace_back(i, j);
+      if (keys[i].frame_id != keys[j].frame_id) ids_to_match.emplace_back(i, j);
     }
   }
 
@@ -1303,13 +1298,13 @@ void match_all() {
 
   tbb::parallel_for(
       tbb::blocked_range<size_t>(0, ids_to_match.size()),
-      [&](const tbb::blocked_range<size_t> &r) {
+      [&](const tbb::blocked_range<size_t>& r) {
         for (size_t j = r.begin(); j != r.end(); ++j) {
-          const FrameCamId &id1 = keys[ids_to_match[j].first];
-          const FrameCamId &id2 = keys[ids_to_match[j].second];
+          const FrameCamId& id1 = keys[ids_to_match[j].first];
+          const FrameCamId& id2 = keys[ids_to_match[j].second];
 
-          const KeypointsData &f1 = feature_corners[id1];
-          const KeypointsData &f2 = feature_corners[id2];
+          const KeypointsData& f1 = feature_corners[id1];
+          const KeypointsData& f2 = feature_corners[id2];
 
           MatchData md;
 
@@ -1327,6 +1322,7 @@ void match_all() {
           //  UPdate assign to insert
           //          feature_matches[std::make_pair(id1, id2)] = md;
           feature_matches.insert(std::make_pair(std::make_pair(id1, id2), md));
+          //          feature_matches.emplace(std::make_pair(id1, id2), md);
         }
       });
 
@@ -1334,8 +1330,8 @@ void match_all() {
   int num_inliers = 0;
   int num_success = 0;
 
-  for (const auto &p : ids_to_match) {
-    auto &md = feature_matches[std::make_pair(keys[p.first], keys[p.second])];
+  for (const auto& p : ids_to_match) {
+    auto& md = feature_matches[std::make_pair(keys[p.first], keys[p.second])];
     num_matches += md.matches.size();
     num_inliers += md.inliers.size();
     if (md.inliers.size() > 0) {
@@ -1380,7 +1376,7 @@ void match_bow() {
   std::unordered_map<FrameCamId, int> id_to_key;
   std::vector<std::pair<int, int>> ids_to_match;
 
-  for (const auto &kv : feature_corners) {
+  for (const auto& kv : feature_corners) {
     int curr_id = keys.size();
     id_to_key[kv.first] = curr_id;
     keys.push_back(kv.first);
@@ -1391,7 +1387,7 @@ void match_bow() {
     BowQueryResult r;
     bow_db->query(v, num_bow_candidates, r);
 
-    for (const auto &res_kv : r) {
+    for (const auto& res_kv : r) {
       // Do not add stereo pairs (have same timestamp)
       if (kv.first.frame_id != res_kv.first.frame_id) {
         ids_to_match.emplace_back(curr_id, id_to_key.at(res_kv.first));
@@ -1406,13 +1402,13 @@ void match_bow() {
 
   tbb::parallel_for(
       tbb::blocked_range<size_t>(0, ids_to_match.size()),
-      [&](const tbb::blocked_range<size_t> &r) {
+      [&](const tbb::blocked_range<size_t>& r) {
         for (size_t j = r.begin(); j != r.end(); ++j) {
-          const FrameCamId &id1 = keys[ids_to_match[j].first];
-          const FrameCamId &id2 = keys[ids_to_match[j].second];
+          const FrameCamId& id1 = keys[ids_to_match[j].first];
+          const FrameCamId& id2 = keys[ids_to_match[j].second];
 
-          const KeypointsData &f1 = feature_corners[id1];
-          const KeypointsData &f2 = feature_corners[id2];
+          const KeypointsData& f1 = feature_corners[id1];
+          const KeypointsData& f2 = feature_corners[id2];
 
           MatchData md;
 
@@ -1430,6 +1426,7 @@ void match_bow() {
           //  UPdate assign to insert
           //          feature_matches[std::make_pair(id1, id2)] = md;
           feature_matches.insert(std::make_pair(std::make_pair(id1, id2), md));
+          //          feature_matches.emplace(std::make_pair(id1, id2), md);
         }
       });
 
@@ -1437,8 +1434,8 @@ void match_bow() {
   int num_inliers = 0;
   int num_success = 0;
 
-  for (const auto &p : ids_to_match) {
-    auto &md = feature_matches[std::make_pair(keys[p.first], keys[p.second])];
+  for (const auto& p : ids_to_match) {
+    auto& md = feature_matches[std::make_pair(keys[p.first], keys[p.second])];
     num_matches += md.matches.size();
     num_inliers += md.inliers.size();
     if (md.inliers.size() > 0) {
@@ -1470,7 +1467,7 @@ void match_bow() {
 void unreachable() {
   std::set<FrameCamId> all_fcid;
 
-  for (auto &kv : feature_corners) {
+  for (auto& kv : feature_corners) {
     all_fcid.emplace(kv.first);
   }
 
@@ -1484,9 +1481,9 @@ void unreachable() {
   while (num_added > 0) {
     num_added = 0;
 
-    for (auto &kv : feature_matches) {
-      const FrameCamId &t1 = kv.first.first;
-      const FrameCamId &t2 = kv.first.second;
+    for (auto& kv : feature_matches) {
+      const FrameCamId& t1 = kv.first.first;
+      const FrameCamId& t2 = kv.first.second;
 
       if (reachable_fcid.find(t1) != reachable_fcid.end() &&
           reachable_fcid.find(t2) == reachable_fcid.end() &&
@@ -1515,7 +1512,7 @@ void unreachable() {
 
   diff_fcid.resize(it - diff_fcid.begin());
 
-  for (const FrameCamId &t : diff_fcid) {
+  for (const FrameCamId& t : diff_fcid) {
     std::cout << "frame " << t.frame_id << " cam " << t.cam_id << std::endl;
   }
 }
@@ -1535,12 +1532,12 @@ void build_tracks() {
 
   // info
   size_t inlier_match_count = 0;
-  for (const auto &it : feature_matches) {
+  for (const auto& it : feature_matches) {
     inlier_match_count += it.second.inliers.size();
   }
 
   size_t total_track_obs_count = 0;
-  for (const auto &it : feature_tracks) {
+  for (const auto& it : feature_tracks) {
     total_track_obs_count += it.second.size();
   }
 
@@ -1586,7 +1583,7 @@ void initialize_scene() {
 
 // Select a sorted list of next camera candidates fulfilling the given inlier
 // count threshold
-void next_camera_candidate_set(CameraCandidates &candidate_set) {
+void next_camera_candidate_set(CameraCandidates& candidate_set) {
   candidate_set.cameras.clear();
   for (int i = 0; i < int(timestamps.size()); ++i) {
     for (int j = 0; j < NUM_CAMS; ++j) {
@@ -1612,7 +1609,7 @@ void next_camera_candidate_set(CameraCandidates &candidate_set) {
 
   // sort by number of shared tracks in descending order
   std::sort(candidate_set.cameras.begin(), candidate_set.cameras.end(),
-            [](const CameraCandidate &a, const CameraCandidate &b) {
+            [](const CameraCandidate& a, const CameraCandidate& b) {
               return a.shared_tracks.size() > b.shared_tracks.size();
             });
 }
@@ -1626,7 +1623,7 @@ void compute_camera_candidate_set() {
   // check previous stage and warn if we missed something
   size_t num_tried = 0;
   size_t num_added = 0;
-  for (const auto &candidate : camera_candidates.cameras) {
+  for (const auto& candidate : camera_candidates.cameras) {
     if (!candidate.tried) {
       // not trying is ok, since we will just select again
       //      std::cerr << "Camera " << candidate.fcid
@@ -1724,10 +1721,10 @@ void add_next_camera() {
   check_current_stage_equal_to(CameraCandidates::AddCameras);
 
   // find next candidate to try
-  CameraCandidate *candidate = nullptr;
+  CameraCandidate* candidate = nullptr;
   size_t i = 0;
   int num_added = 0;
-  for (auto &c : camera_candidates.cameras) {
+  for (auto& c : camera_candidates.cameras) {
     if (c.camera_added) {
       ++num_added;
     } else if (!c.tried) {
@@ -1842,9 +1839,9 @@ void add_new_landmarks() {
   check_current_stage_equal_to(CameraCandidates::AddLandmarks);
 
   // Determine next camera for which to add landmarks
-  CameraCandidate *candidate = nullptr;
+  CameraCandidate* candidate = nullptr;
   size_t i = 0;
-  for (auto &c : camera_candidates.cameras) {
+  for (auto& c : camera_candidates.cameras) {
     if (c.camera_added && !c.landmarks_added) {
       c.landmarks_added = true;
       candidate = &c;
@@ -1865,8 +1862,8 @@ void add_new_landmarks() {
     // pair-wise. If there are additional cameras in the existing map also
     // sharing the same track, we add observations after triangulation.
     int new_landmark_count = 0;
-    for (const auto &kv : cameras) {
-      const FrameCamId &fcid_existing = kv.first;
+    for (const auto& kv : cameras) {
+      const FrameCamId& fcid_existing = kv.first;
       if (fcid_existing != fcid) {
         new_landmark_count += add_new_landmarks_between_cams(
             fcid_existing, fcid, calib_cam, feature_corners, feature_tracks,
@@ -1901,7 +1898,7 @@ void optimize() {
   // info on how many cameras were added (special case: first optimization after
   // initialization)
   size_t num_obs = 0;
-  for (const auto &kv : landmarks) {
+  for (const auto& kv : landmarks) {
     num_obs += kv.second.obs.size();
   }
   const int num_cameras_new = camera_candidates.min_localization_inliers == 0
@@ -1939,7 +1936,7 @@ void optimize() {
 }
 
 // helper for computing outlier flags for a projected landmark
-void set_outlier_flags(ProjectedLandmark &lm_proj) {
+void set_outlier_flags(ProjectedLandmark& lm_proj) {
   // 1. check for huge reprojection error
   if (lm_proj.reprojection_error >
       reprojection_error_outlier_threshold_huge_pixel) {
@@ -1972,11 +1969,11 @@ void compute_projections() {
   image_projections.clear();
   track_projections.clear();
 
-  for (const auto &kv_lm : landmarks) {
+  for (const auto& kv_lm : landmarks) {
     const TrackId track_id = kv_lm.first;
 
-    for (const auto &kv_obs : kv_lm.second.obs) {
-      const FrameCamId &fcid = kv_obs.first;
+    for (const auto& kv_obs : kv_lm.second.obs) {
+      const FrameCamId& fcid = kv_obs.first;
       const Eigen::Vector2d p_2d_corner =
           feature_corners.at(fcid).corners[kv_obs.second];
 
@@ -1998,8 +1995,8 @@ void compute_projections() {
       track_projections[track_id][fcid] = proj_lm;
     }
 
-    for (const auto &kv_obs : kv_lm.second.outlier_obs) {
-      const FrameCamId &fcid = kv_obs.first;
+    for (const auto& kv_obs : kv_lm.second.outlier_obs) {
+      const FrameCamId& fcid = kv_obs.first;
       const Eigen::Vector2d p_2d_corner =
           feature_corners.at(fcid).corners[kv_obs.second];
 
@@ -2024,7 +2021,7 @@ void compute_projections() {
 // Assumes that the track_id is currently a landmark.
 bool is_landmark_outlier(const TrackId track_id) {
   // check if any of the observations has outlier flags
-  for (const auto &kv : track_projections.at(track_id)) {
+  for (const auto& kv : track_projections.at(track_id)) {
     if (kv.second->outlier_flags != OutlierNone) {
       return true;
     }
@@ -2049,8 +2046,8 @@ void remove_outlier_landmarks() {
 
   // check if there are any outliers apart from the normal reprojection error
   bool any_severe_outliers = false;
-  for (const auto &kv_tracks : track_projections) {
-    for (const auto &kv_proj : kv_tracks.second) {
+  for (const auto& kv_tracks : track_projections) {
+    for (const auto& kv_proj : kv_tracks.second) {
       if (kv_proj.second->outlier_flags & ~OutlierReprojectionErrorNormal) {
         any_severe_outliers = true;
         break;
@@ -2064,11 +2061,11 @@ void remove_outlier_landmarks() {
   // Go through projections and remove marked outliers.
   // OutlierReprojectionErrorNormal is only removed if no other types of
   // outliers are present.
-  for (const auto &kv_tracks : track_projections) {
+  for (const auto& kv_tracks : track_projections) {
     bool remove = false;
     bool repr_error_normal_counted = false;
 
-    for (const auto &kv_proj : kv_tracks.second) {
+    for (const auto& kv_proj : kv_tracks.second) {
       // 1. much too large repr. error
       if (kv_proj.second->outlier_flags & OutlierReprojectionErrorHuge) {
         ++num_repr_error_huge;
