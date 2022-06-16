@@ -44,7 +44,7 @@ endif()
 # is currently the only viable option to avoid subtle bugs with Eigen.
 SET(CXX_MARCH native)
 
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17) # Change to 14 if needed
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -118,7 +118,8 @@ target_link_libraries(sfm Ceres::ceres pangolin TBB::tbb OpenCV opengv)
 add_executable(odometry src/odometry.cpp)
 target_link_libraries(odometry Ceres::ceres pangolin TBB::tbb OpenCV opengv)
 
-
+add_executable(optical_flow_odometry src/optical_flow_odometry.cpp)
+target_link_libraries(optical_flow_odometry Ceres::ceres pangolin TBB::tbb OpenCV opengv)
 
 enable_testing()
 add_subdirectory(test)
