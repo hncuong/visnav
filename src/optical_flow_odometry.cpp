@@ -64,6 +64,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <visnav/serialization.h>
 
+#include <visnav/optical_flow_utils.h>
+
 using namespace visnav;
 
 ///////////////////////////////////////////////////////////////////////////////
