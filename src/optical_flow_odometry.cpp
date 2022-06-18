@@ -58,6 +58,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <visnav/map_utils.h>
 #include <visnav/matching_utils.h>
 #include <visnav/vo_utils.h>
+#include <visnav/optical_flow_utils.h>
 
 #include <visnav/gui_helper.h>
 #include <visnav/tracks.h>
@@ -136,6 +137,12 @@ Landmarks old_landmarks;
 /// cameras, landmarks, and feature_tracks; used for visualization and
 /// determining outliers; indexed by images
 ImageProjections image_projections;
+
+// Optical Flows specific
+// Keypoints data of last frame
+KeypointsData kd_last;
+// Last image
+pangolin::ManagedImage<uint8_t> imgl_last;
 
 ///////////////////////////////////////////////////////////////////////////////
 /// GUI parameters
@@ -384,6 +391,10 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
   FrameCamId fcid(frame_id, cam_id);
 
   float text_row = 20;
+  // TODO Draw flow lines later
+  //  if (show_flow) {
+  //    pangolin::glDrawLine(c, c + r);
+  //  }
 
   if (show_detected) {
     glLineWidth(1.0);
@@ -775,6 +786,7 @@ void load_data(const std::string& dataset_path, const std::string& calib_path) {
 
 // Execute next step in the overall odometry pipeline. Call this repeatedly
 // until it returns false for automatic execution.
+// TODO Update this function
 bool next_step() {
   if (current_frame >= int(images.size()) / NUM_CAMS) return false;
 
@@ -784,42 +796,33 @@ bool next_step() {
     take_keyframe = false;
 
     FrameCamId fcidl(current_frame, 0), fcidr(current_frame, 1);
-
-    std::vector<Eigen::Vector2d, Eigen::aligned_allocator<Eigen::Vector2d>>
-        projected_points;
-    std::vector<TrackId> projected_track_ids;
-
-    project_landmarks(current_pose, calib_cam.intrinsics[0], landmarks,
-                      cam_z_threshold, projected_points, projected_track_ids);
-
-    std::cout << "KF Projected " << projected_track_ids.size() << " points."
-              << std::endl;
-
+    FrameCamId fcid_last(current_frame - 1, 0);
     MatchData md_stereo;
     KeypointsData kdl, kdr;
 
     pangolin::ManagedImage<uint8_t> imgl = pangolin::LoadImage(images[fcidl]);
     pangolin::ManagedImage<uint8_t> imgr = pangolin::LoadImage(images[fcidr]);
 
-    // TODO Detect keypoints left image
+    // 1st: Flow from last frame to current frame
+    MatchData md_last;
+    optical_flows(imgl_last, imgl, kd_last, kdl, md_last);
+
+    // Change kd_last to kdl for next frame
+    kd_last = kdl;
+    imgl_last.CopyFrom(imgl);
+
+    // TODO Add Detect keypoints left image
     // Optical Flow to find keypoints and stereo matches to right image
     // Output:
     // kdl, kdr
     // md_stereo
-    detectKeypointsAndDescriptors(
-        imgl, kdl, num_features_per_image,  // change to detect keypoints only
-        rotate_features);
-    //    detectKeypointsAndDescriptors(imgr, kdr, num_features_per_image,
-    //                                  rotate_features);
+    add_keypoints(imgl, kdl, num_features_per_image);
+    optical_flows(imgl, imgr, kdl, kdr, md_stereo);
 
     md_stereo.T_i_j = T_0_1;
 
     Eigen::Matrix3d E;
     computeEssential(T_0_1, E);
-
-    //    matchDescriptors(kdl.corner_descriptors, kdr.corner_descriptors,
-    //                     md_stereo.matches, feature_match_max_dist,
-    //                     feature_match_test_next_best);
 
     findInliersEssential(kdl, kdr, calib_cam.intrinsics[0],
                          calib_cam.intrinsics[1], E, 1e-3, md_stereo);
@@ -836,10 +839,7 @@ bool next_step() {
 
     LandmarkMatchData md;
     // TODO CHange to optical flow version
-    find_matches_landmarks(kdl, landmarks, feature_corners, projected_points,
-                           projected_track_ids, match_max_dist_2d,
-                           feature_match_max_dist, feature_match_test_next_best,
-                           md);
+    find_matches_landmarks_with_otpical_flow(fcid_last, md_last, landmarks, md);
 
     std::cout << "KF Found " << md.matches.size() << " matches." << std::endl;
     // TODO CHange to optical flow version
@@ -870,32 +870,25 @@ bool next_step() {
     return true;
   } else {
     FrameCamId fcidl(current_frame, 0), fcidr(current_frame, 1);
-
-    std::vector<Eigen::Vector2d, Eigen::aligned_allocator<Eigen::Vector2d>>
-        projected_points;
-    std::vector<TrackId> projected_track_ids;
-
-    project_landmarks(current_pose, calib_cam.intrinsics[0], landmarks,
-                      cam_z_threshold, projected_points, projected_track_ids);
-
-    std::cout << "Projected " << projected_track_ids.size() << " points."
-              << std::endl;
+    FrameCamId fcid_last(current_frame - 1, 0);
 
     KeypointsData kdl;
 
     pangolin::ManagedImage<uint8_t> imgl = pangolin::LoadImage(images[fcidl]);
     // TODO Change to Use Optical flows from last frame -> current frame
-    detectKeypointsAndDescriptors(imgl, kdl, num_features_per_image,
-                                  rotate_features);
+    // 1st: Flow from last frame to current frame
+    MatchData md_last;
+    optical_flows(imgl_last, imgl, kd_last, kdl, md_last);
+
+    // Change kd_last to kdl for next frame
+    kd_last = kdl;
+    imgl_last.CopyFrom(imgl);
 
     feature_corners[fcidl] = kdl;
 
     // TODO Use Optical Flows version
     LandmarkMatchData md;
-    find_matches_landmarks(kdl, landmarks, feature_corners, projected_points,
-                           projected_track_ids, match_max_dist_2d,
-                           feature_match_max_dist, feature_match_test_next_best,
-                           md);
+    find_matches_landmarks_with_otpical_flow(fcid_last, md_last, landmarks, md);
 
     std::cout << "Found " << md.matches.size() << " matches." << std::endl;
     // TODO Use Optical Flows version
