@@ -138,11 +138,13 @@ Landmarks old_landmarks;
 /// determining outliers; indexed by images
 ImageProjections image_projections;
 
-// Optical Flows specific
-// Keypoints data of last frame
+/// Optical Flows specific
+/// Keypoints data of last frame
 KeypointsData kd_last;
-// Last image
+/// Last image
 pangolin::ManagedImage<uint8_t> imgl_last;
+/// Flows
+Landmarks flows;
 
 ///////////////////////////////////////////////////////////////////////////////
 /// GUI parameters
@@ -407,14 +409,17 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
 
       for (size_t i = 0; i < cr.corners.size(); i++) {
         Eigen::Vector2d c = cr.corners[i];
-        double angle = cr.corner_angles[i];
+        //        double angle = cr.corner_angles[i];
         pangolin::glDrawCirclePerimeter(c[0], c[1], 3.0);
 
-        Eigen::Vector2d r(3, 0);
-        Eigen::Rotation2Dd rot(angle);
-        r = rot * r;
+        /*
+         * No draw angle for Optical flow one
+         */
+        //        Eigen::Vector2d r(3, 0);
+        //        Eigen::Rotation2Dd rot(angle);
+        //        r = rot * r;
 
-        pangolin::glDrawLine(c, c + r);
+        //        pangolin::glDrawLine(c, c + r);
       }
 
       pangolin::GlFont::I()
@@ -427,6 +432,61 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
       pangolin::GlFont::I().Text("Corners not processed").Draw(5, text_row);
     }
     text_row += 20;
+  }
+
+  /*
+   * Draw some flows from start to current frame
+   */
+  bool show_flows = true;
+  if (show_flows) {
+    // TODO Pick random color
+    glColor3f(0.0, 0.0, 1.0);  // blue
+
+    // Draw flows of current fcid to
+    size_t num_flows_to_draw = 10;
+    size_t num_flows = flows.size();
+    size_t step = num_flows / num_flows_to_draw + 1;
+    size_t flow_cnt = 0;
+    size_t flow_draw_cnt = 0;
+
+    for (const auto& kv_fl : flows) {
+      // Only select some flows
+      if (flow_cnt % step == 0) {
+        const auto& trackId = kv_fl.first;
+        const auto& flow = kv_fl.second;
+
+        // If flow exist in the frame
+        // Draw the point in the current frame
+        // And draw flow back to the start
+        if (flow.obs.count(fcid) > 0 && feature_corners.count(fcid) > 0) {
+          const auto& featureId = flow.obs.at(fcid);
+          const KeypointsData& cr = feature_corners.at(fcid);
+          Eigen::Vector2d c = cr.corners[featureId];
+          pangolin::glDrawCirclePerimeter(c[0], c[1], 3.0);
+
+          // Draw line to previous if exists
+          FrameCamId previous_fcid(fcid.frame_id - 1, fcid.cam_id);
+          while (flow.obs.count(previous_fcid) > 0 &&
+                 feature_corners.count(previous_fcid) > 0) {
+            const auto& prev_featureId = flow.obs.at(previous_fcid);
+            Eigen::Vector2d prev_c =
+                feature_corners.at(previous_fcid).corners[prev_featureId];
+            pangolin::glDrawLine(c, prev_c);
+
+            // Update previous frame keypoints and fcid
+            c = prev_c;
+            previous_fcid =
+                FrameCamId(previous_fcid.frame_id - 1, previous_fcid.cam_id);
+          }
+
+          flow_draw_cnt++;
+        }
+      }
+      // Increaset flow counter
+      flow_cnt++;
+    }
+    std::cout << "Draw " << flow_draw_cnt << " flows "
+              << " from " << flow_cnt << "\n";
   }
 
   if (show_matches || show_inliers) {
@@ -463,14 +523,17 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
                                   : it->second.matches[i].second;
 
           Eigen::Vector2d c = cr.corners[c_idx];
-          double angle = cr.corner_angles[c_idx];
+          //          double angle = cr.corner_angles[c_idx];
           pangolin::glDrawCirclePerimeter(c[0], c[1], 3.0);
 
-          Eigen::Vector2d r(3, 0);
-          Eigen::Rotation2Dd rot(angle);
-          r = rot * r;
+          /*
+           * No angle for Optical flow
+           */
+          //          Eigen::Vector2d r(3, 0);
+          //          Eigen::Rotation2Dd rot(angle);
+          //          r = rot * r;
 
-          pangolin::glDrawLine(c, c + r);
+          //          pangolin::glDrawLine(c, c + r);
 
           if (show_ids) {
             pangolin::GlFont::I().Text("%d", i).Draw(c[0], c[1]);
@@ -495,14 +558,15 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
                                   : it->second.inliers[i].second;
 
           Eigen::Vector2d c = cr.corners[c_idx];
-          double angle = cr.corner_angles[c_idx];
+          //          double angle = cr.corner_angles[c_idx];
           pangolin::glDrawCirclePerimeter(c[0], c[1], 3.0);
 
-          Eigen::Vector2d r(3, 0);
-          Eigen::Rotation2Dd rot(angle);
-          r = rot * r;
+          // No angle for OF
+          //          Eigen::Vector2d r(3, 0);
+          //          Eigen::Rotation2Dd rot(angle);
+          //          r = rot * r;
 
-          pangolin::glDrawLine(c, c + r);
+          //          pangolin::glDrawLine(c, c + r);
 
           if (show_ids) {
             pangolin::GlFont::I().Text("%d", i).Draw(c[0], c[1]);
@@ -786,7 +850,6 @@ void load_data(const std::string& dataset_path, const std::string& calib_path) {
 
 // Execute next step in the overall odometry pipeline. Call this repeatedly
 // until it returns false for automatic execution.
-// TODO Update this function
 bool next_step() {
   if (current_frame >= int(images.size()) / NUM_CAMS) return false;
 
@@ -807,10 +870,6 @@ bool next_step() {
     MatchData md_last;
     optical_flows(imgl_last, imgl, kd_last, kdl, md_last);
 
-    // Change kd_last to kdl for next frame
-    kd_last = kdl;
-    imgl_last.CopyFrom(imgl);
-
     // TODO Add Detect keypoints left image
     // Optical Flow to find keypoints and stereo matches to right image
     // Output:
@@ -818,6 +877,10 @@ bool next_step() {
     // md_stereo
     add_keypoints(imgl, kdl, num_features_per_image);
     optical_flows(imgl, imgr, kdl, kdr, md_stereo);
+
+    // Change kd_last to kdl for next frame
+    kd_last = kdl;
+    imgl_last.CopyFrom(imgl);
 
     md_stereo.T_i_j = T_0_1;
 
@@ -839,7 +902,10 @@ bool next_step() {
 
     LandmarkMatchData md;
     // TODO CHange to optical flow version
-    find_matches_landmarks_with_otpical_flow(fcid_last, md_last, landmarks, md);
+    // TODO Update find match landmark for Optical flow; landmark that does not
+    // have obs last frame
+    find_matches_landmarks_with_otpical_flow(fcid_last, md_last, flows, md);
+    std::cout << "Current exist " << flows.size() << " flows." << std::endl;
 
     std::cout << "KF Found " << md.matches.size() << " matches." << std::endl;
     // TODO CHange to optical flow version
@@ -851,8 +917,8 @@ bool next_step() {
     cameras[fcidl].T_w_c = current_pose;
     cameras[fcidr].T_w_c = current_pose * T_0_1;
     // TODO CHange to optical flow version
-    add_new_landmarks(fcidl, fcidr, kdl, kdr, calib_cam, md_stereo, md,
-                      landmarks, next_landmark_id);
+    add_new_landmarks_optical_flow(fcidl, fcidr, kdl, kdr, calib_cam, md_stereo,
+                                   md, landmarks, next_landmark_id, flows);
     // TODO CHange to optical flow version
     remove_old_keyframes(fcidl, max_num_kfs, cameras, landmarks, old_landmarks,
                          kf_frames);
@@ -888,9 +954,10 @@ bool next_step() {
 
     // TODO Use Optical Flows version
     LandmarkMatchData md;
-    find_matches_landmarks_with_otpical_flow(fcid_last, md_last, landmarks, md);
+    find_matches_landmarks_with_otpical_flow(fcid_last, md_last, flows, md);
 
     std::cout << "Found " << md.matches.size() << " matches." << std::endl;
+    std::cout << "Current exist " << flows.size() << " flows." << std::endl;
     // TODO Use Optical Flows version
     localize_camera(current_pose, calib_cam.intrinsics[0], kdl, landmarks,
                     reprojection_error_pnp_inlier_threshold_pixel, md);
@@ -898,9 +965,17 @@ bool next_step() {
     current_pose = md.T_w_c;
 
     // TODO When number flows fall under a threshold
+    if (int(md.inliers.size()) < new_kf_min_inliers) {
+      std::cout << "Found " << md.inliers.size() << " inliers matches."
+                << std::endl;
+      std::cout << "Hope to take new keyframe now!"
+                << " - opt_running " << opt_running << " opt_finished "
+                << opt_finished << "\n";
+    }
     if (int(md.inliers.size()) < new_kf_min_inliers && !opt_running &&
         !opt_finished) {
       take_keyframe = true;
+      std::cout << "Take new keyframe next step!\n";
     }
 
     if (!opt_running && opt_finished) {
