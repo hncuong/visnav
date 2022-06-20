@@ -77,6 +77,9 @@ void change_display_to_image(const FrameCamId& fcid);
 void draw_scene();
 void load_data(const std::string& path, const std::string& calib_path);
 bool next_step();
+
+bool next_step_optical_flow();
+
 void optimize();
 void compute_projections();
 
@@ -91,10 +94,11 @@ constexpr int NUM_CAMS = 2;
 /// Variables
 ///////////////////////////////////////////////////////////////////////////////
 
-int current_frame = 0;
+int current_frame = 1;
 Sophus::SE3d current_pose;
 bool take_keyframe = true;
 TrackId next_landmark_id = 0;
+bool first_step = true;
 
 std::atomic<bool> opt_running{false};
 std::atomic<bool> opt_finished{false};
@@ -168,6 +172,16 @@ pangolin::Var<bool> show_epipolar("hidden.show_epipolar", false, true);
 pangolin::Var<bool> show_cameras3d("hidden.show_cameras", true, true);
 pangolin::Var<bool> show_points3d("hidden.show_points", true, true);
 pangolin::Var<bool> show_old_points3d("hidden.show_old_points3d", true, true);
+
+// Show Optical Flow
+pangolin::Var<bool> show_optical_flow("ui.show_optical_flow", true, true);
+
+/// Added afterwards
+
+pangolin::Var<double> relative_pose_ransac_thresh("hidden.5pt_thresh", 5e-5,
+                                                  1e-10, 1, true);
+pangolin::Var<int> relative_pose_ransac_min_inliers("hidden.5pt_min_inlier", 16,
+                                                    1, 100);
 
 //////////////////////////////////////////////
 /// Feature extraction and matching options
@@ -359,7 +373,7 @@ int main(int argc, char** argv) {
 
       if (continue_next) {
         // stop if there is nothing left to do
-        continue_next = next_step();
+        continue_next = next_step_optical_flow();
       } else {
         // if the gui is just idling, make sure we don't burn too much CPU
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -367,7 +381,7 @@ int main(int argc, char** argv) {
     }
   } else {
     // non-gui mode: Process all frames, then exit
-    while (next_step()) {
+    while (next_step_optical_flow()) {
       // nop
     }
   }
@@ -420,7 +434,7 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
     text_row += 20;
   }
 
-  if (show_matches || show_inliers) {
+  if (show_matches || show_inliers || show_optical_flow) {
     glLineWidth(1.0);
     glColor3f(0.0, 0.0, 1.0);  // blue
     glEnable(GL_BLEND);
@@ -470,6 +484,55 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
 
         pangolin::GlFont::I()
             .Text("Detected %d matches", it->second.matches.size())
+            .Draw(5, text_row);
+        text_row += 20;
+      }
+    }
+
+    glColor3f(1.0, 1.0, 1.0);  // white
+
+    if (idx >= 0 && show_optical_flow) {
+      if (feature_corners.find(fcid) != feature_corners.end()) {
+        const KeypointsData& cr = feature_corners.at(fcid);
+
+        for (size_t i = 0; i < it->second.matches.size(); i++) {
+          size_t c_idx = idx == 0 ? it->second.matches[i].first
+                                  : it->second.matches[i].second;
+          /*
+           * Show the optical flow of 2 images in left and right frame camera
+           * - Visualise the arrow from the current frame to the next for left
+           * frame cam
+           * - Visualise the arrow from the next frame to the current frame for
+           * the right camera
+           * - Good matches via optical flow should show back and forth
+           * direction points to the same points
+           */
+
+          // Set of detected corners in a particular frame
+          Eigen::Vector2d c = cr.corners[c_idx];
+          // double angle = cr.corner_angles[c_idx];
+          // Set the perimeter of the circle to be 3.0 unit
+          pangolin::glDrawCirclePerimeter(c[0], c[1], 3.0);
+
+          // Draw the line illustrating the flow of the points in the next frame
+
+          Eigen::Vector2d next_point(1, 1);
+
+          /*
+          Eigen::Vector2d r(3, 0);
+          Eigen::Rotation2Dd rot(angle);
+          r = rot * r;
+          */
+
+          pangolin::glDrawLine(c, c + next_point);
+
+          if (show_ids) {
+            pangolin::GlFont::I().Text("%d", i).Draw(c[0], c[1]);
+          }
+        }
+
+        pangolin::GlFont::I()
+            .Text("Detected Optical Flow %d matches", it->second.matches.size())
             .Draw(5, text_row);
         text_row += 20;
       }
@@ -774,7 +837,6 @@ void load_data(const std::string& dataset_path, const std::string& calib_path) {
 ///////////////////////////////////////////////////////////////////////////////
 /// Here the algorithmically interesting implementation begins
 ///////////////////////////////////////////////////////////////////////////////
-
 // Execute next step in the overall odometry pipeline. Call this repeatedly
 // until it returns false for automatic execution.
 bool next_step() {
@@ -803,25 +865,19 @@ bool next_step() {
     pangolin::ManagedImage<uint8_t> imgl = pangolin::LoadImage(images[fcidl]);
     pangolin::ManagedImage<uint8_t> imgr = pangolin::LoadImage(images[fcidr]);
 
-    // TODO Detect keypoints left image
-    // Optical Flow to find keypoints and stereo matches to right image
-    // Output:
-    // kdl, kdr
-    // md_stereo
-    detectKeypointsAndDescriptors(
-        imgl, kdl, num_features_per_image,  // change to detect keypoints only
-        rotate_features);
-    //    detectKeypointsAndDescriptors(imgr, kdr, num_features_per_image,
-    //                                  rotate_features);
+    detectKeypointsAndDescriptors(imgl, kdl, num_features_per_image,
+                                  rotate_features);
+    detectKeypointsAndDescriptors(imgr, kdr, num_features_per_image,
+                                  rotate_features);
 
     md_stereo.T_i_j = T_0_1;
 
     Eigen::Matrix3d E;
     computeEssential(T_0_1, E);
 
-    //    matchDescriptors(kdl.corner_descriptors, kdr.corner_descriptors,
-    //                     md_stereo.matches, feature_match_max_dist,
-    //                     feature_match_test_next_best);
+    matchDescriptors(kdl.corner_descriptors, kdr.corner_descriptors,
+                     md_stereo.matches, feature_match_max_dist,
+                     feature_match_test_next_best);
 
     findInliersEssential(kdl, kdr, calib_cam.intrinsics[0],
                          calib_cam.intrinsics[1], E, 1e-3, md_stereo);
@@ -831,20 +887,17 @@ bool next_step() {
 
     feature_corners[fcidl] = kdl;
     feature_corners[fcidr] = kdr;
-    // TODO update to insert
-    feature_matches.insert(
-        std::make_pair(std::make_pair(fcidl, fcidr), md_stereo));
-    //    feature_matches[std::make_pair(fcidl, fcidr)] = md_stereo;
+    feature_matches[std::make_pair(fcidl, fcidr)] = md_stereo;
 
     LandmarkMatchData md;
-    // TODO CHange to optical flow version
+
     find_matches_landmarks(kdl, landmarks, feature_corners, projected_points,
                            projected_track_ids, match_max_dist_2d,
                            feature_match_max_dist, feature_match_test_next_best,
                            md);
 
     std::cout << "KF Found " << md.matches.size() << " matches." << std::endl;
-    // TODO CHange to optical flow version
+
     localize_camera(current_pose, calib_cam.intrinsics[0], kdl, landmarks,
                     reprojection_error_pnp_inlier_threshold_pixel, md);
 
@@ -852,10 +905,10 @@ bool next_step() {
 
     cameras[fcidl].T_w_c = current_pose;
     cameras[fcidr].T_w_c = current_pose * T_0_1;
-    // TODO CHange to optical flow version
+
     add_new_landmarks(fcidl, fcidr, kdl, kdr, calib_cam, md_stereo, md,
                       landmarks, next_landmark_id);
-    // TODO CHange to optical flow version
+
     remove_old_keyframes(fcidl, max_num_kfs, cameras, landmarks, old_landmarks,
                          kf_frames);
     optimize();
@@ -886,13 +939,12 @@ bool next_step() {
     KeypointsData kdl;
 
     pangolin::ManagedImage<uint8_t> imgl = pangolin::LoadImage(images[fcidl]);
-    // TODO Change to Use Optical flows from last frame -> current frame
+
     detectKeypointsAndDescriptors(imgl, kdl, num_features_per_image,
                                   rotate_features);
 
     feature_corners[fcidl] = kdl;
 
-    // TODO Use Optical Flows version
     LandmarkMatchData md;
     find_matches_landmarks(kdl, landmarks, feature_corners, projected_points,
                            projected_track_ids, match_max_dist_2d,
@@ -900,13 +952,12 @@ bool next_step() {
                            md);
 
     std::cout << "Found " << md.matches.size() << " matches." << std::endl;
-    // TODO Use Optical Flows version
+
     localize_camera(current_pose, calib_cam.intrinsics[0], kdl, landmarks,
                     reprojection_error_pnp_inlier_threshold_pixel, md);
 
     current_pose = md.T_w_c;
 
-    // TODO When number flows fall under a threshold
     if (int(md.inliers.size()) < new_kf_min_inliers && !opt_running &&
         !opt_finished) {
       take_keyframe = true;
@@ -924,6 +975,203 @@ bool next_step() {
     // update image views
     change_display_to_image(fcidl);
     change_display_to_image(fcidr);
+
+    current_frame++;
+    return true;
+  }
+}
+
+// // Execute next step in the overall optical flow based odometry pipeline.
+// Call this repeatedly until it returns false for automatic execution.
+
+/*
+ * Global variables used for indirect visual odometry optical flow
+ */
+
+// previous images and points for opt flow
+cv::Mat prevImageR;
+cv::Mat prevImageL;
+
+// runnıng global pose
+Sophus::SE3d running_TWC;
+// prevıous keypoınts for left and right
+KeypointsData prevKDL;
+KeypointsData prevKDR;
+
+bool next_step_optical_flow() {
+  if (current_frame >= int(images.size()) / NUM_CAMS) return false;
+
+  const Sophus::SE3d T_0_1 = calib_cam.T_i_c[0].inverse() * calib_cam.T_i_c[1];
+  FrameCamId fcidl(current_frame, 0), fcidr(current_frame, 1);
+
+  std::vector<Eigen::Vector2d, Eigen::aligned_allocator<Eigen::Vector2d>>
+      projected_points;
+  std::vector<TrackId> projected_track_ids;
+
+  MatchData md_stereo;
+  KeypointsData kdl, kdr;
+
+  pangolin::ManagedImage<uint8_t> left_image =
+      pangolin::LoadImage(images[fcidl]);
+  pangolin::ManagedImage<uint8_t> right_image =
+      pangolin::LoadImage(images[fcidr]);
+
+  cv::Mat left_image_cv, right_image_cv;
+
+  // Detect keypoints from the initial left frame image
+  if (first_step) {
+    // Frame ID should be 0 at the very first step
+    fcidl.frame_id = 0;
+    left_image = pangolin::LoadImage(images[fcidl]);
+    // Convert pangolin::ManagedImage --> Opencv image
+    left_image_cv = cv::Mat(left_image.h, left_image.w, CV_8U, left_image.ptr);
+    prevImageL = left_image_cv;
+    // Detect all the keypoints in the image
+    detectKeypointsAndDescriptors(left_image, prevKDL, num_features_per_image,
+                                  rotate_features);
+
+    first_step = false;
+  }
+  if (take_keyframe) {
+    take_keyframe = false;
+    /* Project landmarks to the image plane using the current
+     *  locations of the cameras.
+     *  out: projected_points -> 2d coordinates of the projected points
+     *  out: projected_track_ids -> corresponding id of the landmark into
+     */
+    project_landmarks(current_pose, calib_cam.intrinsics[0], landmarks,
+                      cam_z_threshold, projected_points, projected_track_ids);
+
+    std::cout << "KF Projected " << projected_track_ids.size() << " points."
+              << std::endl;
+
+    // In case that number of keypoints in a frame is less than threshold due to
+    // losing keypoints in optical flow
+    // - Detect keypoints in that keyframe again
+    if (prevKDL.corners.size() < 30) {
+      detectKeypointsAndDescriptors(left_image, prevKDL, num_features_per_image,
+                                    rotate_features);
+    }
+
+    detectKeypointsAndDescriptors(right_image, kdr, num_features_per_image,
+                                  rotate_features);
+
+    md_stereo.T_i_j = T_0_1;
+    // Compute the essential matrix based on the transformation of 2 cams at
+    // initial state (from calibration)
+
+    Eigen::Matrix3d essential_matrix;
+    computeEssential(T_0_1, essential_matrix);
+    //  std::map<FeatureId, Sophus::SE2d> flow_last_current, flow_current_last;
+
+    matchOptFlow(left_image, right_image, prevImageL, prevImageR, prevKDL, kdl,
+                 100.0);
+
+    // optical_flows(left_image, right_image, flow_last_current,
+    // low_current_last, kd_last, kd_current, distance_threshold, md);
+
+    matchLeftRightOptFlow(left_image, right_image, kdl, kdr, md_stereo.matches,
+                          100.0);
+
+    std::cout << "Start finding inliers" << std::endl;
+    findInliersEssential(kdl, kdr, calib_cam.intrinsics[0],
+                         calib_cam.intrinsics[1], essential_matrix, 1e-3,
+                         md_stereo);
+
+    std::cout << "KF Found " << md_stereo.inliers.size() << " stereo-matches."
+              << std::endl;
+
+    feature_corners[fcidl] = kdl;
+    feature_corners[fcidr] = kdr;
+    feature_matches[std::make_pair(fcidl, fcidr)] = md_stereo;
+
+    LandmarkMatchData md;
+    std::cout << "Start finding match landmarks" << std::endl;
+    find_matches_landmarks(kdl, landmarks, feature_corners, projected_points,
+                           projected_track_ids, match_max_dist_2d,
+                           feature_match_max_dist, feature_match_test_next_best,
+                           md);
+
+    std::cout << "KF Found " << md.matches.size() << " matches." << std::endl;
+    std::cout << "Start camera localization" << std::endl;
+    localize_camera(current_pose, calib_cam.intrinsics[0], kdl, landmarks,
+                    reprojection_error_pnp_inlier_threshold_pixel, md);
+
+    current_pose = md.T_w_c;
+
+    cameras[fcidl].T_w_c = current_pose;
+    cameras[fcidr].T_w_c = current_pose * T_0_1;
+
+    add_new_landmarks(fcidl, fcidr, kdl, kdr, calib_cam, md_stereo, md,
+                      landmarks, next_landmark_id);
+
+    remove_old_keyframes(fcidl, max_num_kfs, cameras, landmarks, old_landmarks,
+                         kf_frames);
+
+    optimize();
+
+    current_pose = cameras[fcidl].T_w_c;
+
+    // update image views
+    change_display_to_image(fcidl);
+    change_display_to_image(fcidr);
+
+    compute_projections();
+    prevImageL = cv::Mat(left_image.h, left_image.w, CV_8U, left_image.ptr);
+    prevImageR = cv::Mat(right_image.h, right_image.w, CV_8U, right_image.ptr);
+    prevKDL = kdl;
+    prevKDR = kdr;
+    // Update to the next frame
+    current_frame++;
+    return true;
+  } else {
+    project_landmarks(current_pose, calib_cam.intrinsics[0], landmarks,
+                      cam_z_threshold, projected_points, projected_track_ids);
+
+    std::cout << "Projected " << projected_track_ids.size() << " points."
+              << std::endl;
+
+    KeypointsData kdl;
+
+    detectKeypointsAndDescriptors(left_image, kdl, num_features_per_image,
+                                  rotate_features);
+
+    feature_corners[fcidl] = kdl;
+
+    LandmarkMatchData md;
+    find_matches_landmarks(kdl, landmarks, feature_corners, projected_points,
+                           projected_track_ids, match_max_dist_2d,
+                           feature_match_max_dist, feature_match_test_next_best,
+                           md);
+
+    std::cout << "Found " << md.matches.size() << " matches." << std::endl;
+
+    localize_camera(current_pose, calib_cam.intrinsics[0], kdl, landmarks,
+                    reprojection_error_pnp_inlier_threshold_pixel, md);
+
+    current_pose = md.T_w_c;
+
+    if (int(md.inliers.size()) < new_kf_min_inliers && !opt_running &&
+        !opt_finished) {
+      take_keyframe = true;
+    }
+
+    if (!opt_running && opt_finished) {
+      opt_thread->join();
+      landmarks = landmarks_opt;
+      cameras = cameras_opt;
+      calib_cam = calib_cam_opt;
+
+      opt_finished = false;
+    }
+
+    // update image views
+    change_display_to_image(fcidl);
+    change_display_to_image(fcidr);
+    prevImageL = cv::Mat(left_image.h, left_image.w, CV_8U, left_image.ptr);
+    prevImageR = cv::Mat(right_image.h, right_image.w, CV_8U, right_image.ptr);
+    prevKDL = kdl;
+    prevKDR = kdr;
 
     current_frame++;
     return true;
@@ -991,9 +1239,9 @@ void optimize() {
             << landmarks.size() << " points and " << num_obs << " observations."
             << std::endl;
 
-  // Fix oldest two cameras to fix SE3 and scale gauge. Making the whole second
-  // camera constant is a bit suboptimal, since we only need 1 DoF, but it's
-  // simple and the initial poses should be good from calibration.
+  // Fix oldest two cameras to fix SE3 and scale gauge. Making the whole
+  // second camera constant is a bit suboptimal, since we only need 1 DoF, but
+  // it's simple and the initial poses should be good from calibration.
   FrameId fid = *(kf_frames.begin());
   // std::cout << "fid " << fid << std::endl;
 

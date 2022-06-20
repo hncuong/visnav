@@ -1,35 +1,3 @@
-/**
-BSD 3-Clause License
-
-Copyright (c) 2018, Vladyslav Usenko and Nikolaus Demmel.
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-
-* Redistributions of source code must retain the above copyright notice, this
-  list of conditions and the following disclaimer.
-
-* Redistributions in binary form must reproduce the above copyright notice,
-  this list of conditions and the following disclaimer in the documentation
-  and/or other materials provided with the distribution.
-
-* Neither the name of the copyright holder nor the names of its
-  contributors may be used to endorse or promote products derived from
-  this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
-
 #pragma once
 
 #include <set>
@@ -47,17 +15,231 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <pangolin/image/managed_image.h>
 
-#include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/core.hpp>
+#include <opencv2/highgui.hpp>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/videoio.hpp>
+#include <opencv2/video.hpp>
 
 #include <Eigen/Dense>
 #include <sophus/se3.hpp>
+#include <sophus/se2.hpp>
 
 namespace visnav {
+
+void matchOptFlow(const pangolin::ManagedImage<uint8_t>& currImgL,
+                  const pangolin::ManagedImage<uint8_t>& currImgR,
+                  cv::Mat prevImageL, cv::Mat prevImageR, KeypointsData prevKDL,
+                  // for now no references consider referencing
+                  KeypointsData& currKDL, double threshold) {
+  std::cout << "matchOptFlow" << std::endl;
+  cv::Mat imageL(currImgL.h, currImgL.w, CV_8U, currImgL.ptr);
+  cv::Mat imageR(currImgR.h, currImgR.w, CV_8U, currImgR.ptr);
+
+  std::vector<float> err;
+  std::vector<uchar> status;
+  currKDL.corners.clear();
+  cv::TermCriteria criteria = cv::TermCriteria(
+      (cv::TermCriteria::COUNT) + (cv::TermCriteria::EPS), 10, 0.003);
+  std::vector<cv::Point2f> prevPointsL, currPointsL, testL;
+
+  for (auto& c : prevKDL.corners) {
+    prevPointsL.push_back(cv::Point2f(c.x(), c.y()));
+  }
+
+  std::vector<cv::Mat> prevImageLPyramid, imageLPyramid;
+  cv::Size windowSize(5, 5);
+  const int& PYRAMID_LEVEL = 3;
+
+  std::cout << "Creating OpticalFlowPyramid" << std::endl;
+  cv::buildOpticalFlowPyramid(prevImageL, prevImageLPyramid, windowSize,
+                              PYRAMID_LEVEL);
+  cv::buildOpticalFlowPyramid(imageL, imageLPyramid, windowSize, PYRAMID_LEVEL);
+
+  std::cout << "prevImageLPyramid: " << prevImageLPyramid.size()
+            << " imageLPyramid: " << imageLPyramid.size() << std::endl;
+
+  std::cout << "Start Calculating Optical Flow" << std::endl;
+  cv::calcOpticalFlowPyrLK(prevImageLPyramid, imageLPyramid, prevPointsL,
+                           currPointsL, status, err, windowSize, 2, criteria);
+  cv::calcOpticalFlowPyrLK(imageLPyramid, prevImageLPyramid, currPointsL, testL,
+                           status, err, windowSize, 2, criteria);
+
+  std::cout << "currPointsL size: " << currPointsL.size() << std::endl;
+  std::cout << "testL size: " << testL.size() << std::endl;
+  std::cout << "End Calculating Optical Flow" << std::endl;
+
+  for (int i = 0; i < testL.size(); i++) {
+    Eigen::Vector2f diff(abs((testL[i] - prevPointsL[i]).x),
+                         abs((testL[i] - prevPointsL[i]).y));
+    Eigen::Vector2d tempy(round(currPointsL[i].x), round(currPointsL[i].y));
+
+    if ((diff.allFinite()) && (tempy.x() >= 0) && (tempy.y() >= 0) &&
+        ((tempy.y() < imageL.rows && tempy.x() < imageL.cols)) &&
+        (diff.norm() < threshold)) {
+      currKDL.corners.push_back(tempy);
+    }
+  }
+  std::cout << "NUM KEYPOINTS T-1 to T " << currKDL.corners.size() << " TOTAL "
+            << testL.size() << std::endl;
+}
+
+// TODO: Make this KD reference
+void matchLeftRightOptFlow(const pangolin::ManagedImage<uint8_t>& currImgL,
+                           const pangolin::ManagedImage<uint8_t>& currImgR,
+                           KeypointsData& currKDL, KeypointsData& currKDR,
+                           std::vector<std::pair<int, int>>& matches,
+                           double threshold) {
+  std::cout << "matchLeftRightOptFlow" << std::endl;
+  std::vector<cv::Point2f> currPointsL, currPointsR, currPointsTemp;
+  for (auto& c : currKDL.corners) {
+    currPointsL.push_back(cv::Point2f(c.x(), c.y()));
+  }
+
+  std::vector<float> err;
+  std::vector<uchar> status;
+  cv::TermCriteria criteria = cv::TermCriteria(
+      (cv::TermCriteria::COUNT) + (cv::TermCriteria::EPS), 10, 0.003);
+  cv::Mat imageL(currImgL.h, currImgL.w, CV_8U, currImgL.ptr);
+  cv::Mat imageR(currImgR.h, currImgR.w, CV_8U, currImgR.ptr);
+  currKDR.corners.clear();
+  matches.clear();
+
+  std::vector<cv::Mat> currImgLPyramid, currImgRPyramid;
+  cv::Size windowSize(5, 5);
+  const int& PYRAMID_LEVEL = 3;
+
+  std::cout << "Creating OpticalFlow Pyramid" << std::endl;
+  cv::buildOpticalFlowPyramid(imageL, currImgLPyramid, windowSize,
+                              PYRAMID_LEVEL);
+  cv::buildOpticalFlowPyramid(imageR, currImgRPyramid, windowSize,
+                              PYRAMID_LEVEL);
+
+  std::cout << "currImgLPyramid: " << currImgLPyramid.size()
+            << " currImgRPyramid: " << currImgRPyramid.size() << std::endl;
+
+  std::cout << "Do Optical Flow on Image Pyramid L -> R" << std::endl;
+  cv::calcOpticalFlowPyrLK(currImgLPyramid, currImgRPyramid, currPointsL,
+                           currPointsR, status, err, windowSize, 2, criteria);
+
+  std::cout << "Do Optical Flow on Image Pyramid R -> L" << std::endl;
+  cv::calcOpticalFlowPyrLK(currImgRPyramid, currImgLPyramid, currPointsR,
+                           currPointsTemp, status, err, windowSize, 2,
+                           criteria);
+
+  std::cout << "currPointsL: " << currPointsL.size()
+            << " currPointsR: " << currPointsR.size()
+            << " currPointsTemp: " << currPointsTemp.size() << std::endl;
+
+  std::cout << "Optical Flow on Image Pyramid is done" << std::endl;
+
+  std::cout << "currPointsTemp: " << currPointsTemp.size() << std::endl;
+
+  for (int i = 0; i < currPointsTemp.size(); i++) {
+    Eigen::Vector2f diff(abs((currPointsTemp[i] - currPointsL[i]).x),
+                         abs((currPointsTemp[i] - currPointsL[i]).y));
+    Eigen::Vector2d tempy(round(currPointsR[i].x), round(currPointsR[i].y));
+
+    currKDR.corners.push_back(tempy);
+    if ((diff.allFinite()) && (tempy.x() >= 0) && (tempy.y() >= 0) &&
+        ((tempy.y() < imageL.rows && tempy.x() < imageL.cols)) &&
+        (diff.norm() < threshold)) {
+      matches.push_back(std::make_pair(i, i));
+    }
+  }
+
+  std::cout << "Matches after optical flow: " << matches.size() << std::endl;
+}
+
+// Add new keypoints to current exist keypoints in a frame
+// with new detected corners
+void add_keypoints(const pangolin::ManagedImage<uint8_t>& img_raw,
+                   KeypointsData& kd, int num_features) {
+  KeypointsData new_kd;
+  // detectKeypoints(img_raw, new_kd, num_features);
+
+  // TODO Update to check overlap keypoints later
+  for (const auto& kp : new_kd.corners) {
+    kd.corners.emplace_back(kp);
+  }
+}
+
+// TODO Update this function
+// Use optical flow from a last frame to a new frame to establish
+//  1. keypoints in new frame
+//  2. match data between last frame and new frame
 void optical_flows(const pangolin::ManagedImage<uint8_t>& img_last,
                    const pangolin::ManagedImage<uint8_t>& img_current,
-                   KeypointsData& kd_last, KeypointsData& current_frame_kd,
-                   MatchData md) {}
+                   const KeypointsData& kd_last, KeypointsData& kd_current,
+                   MatchData& md) {
+  // If last frame have empty corner
+  if (kd_last.corners.size() == 0) return;
+
+  // Create two frame and convert to Gray
+  cv::Mat old_frame(img_last.h, img_last.w, CV_8U, img_last.ptr);
+  cv::Mat frame(img_current.h, img_current.w, CV_8U, img_current.ptr);
+
+  // Keypoints data
+  std::vector<cv::Point2f> p0, p1;
+  p0.reserve(kd_last.corners.size());
+  p1.reserve(kd_last.corners.size());
+  for (size_t i = 0; i < kd_last.corners.size(); i++) {
+    p0.emplace_back(kd_last.corners.at(i).x(), kd_last.corners.at(i).y());
+  }
+
+  // Optical Flows
+  std::vector<uchar> status;
+  std::vector<float> err;
+  cv::TermCriteria criteria = cv::TermCriteria(
+      (cv::TermCriteria::COUNT) + (cv::TermCriteria::EPS), 10, 0.03);
+
+  cv::calcOpticalFlowPyrLK(old_frame, frame, p0, p1, status, err,
+                           cv::Size(15, 15), 2, criteria);
+
+  // TODO Inverse optical flows
+
+  // Convert results to current_frame_kd and Match data
+  int match_id = 0;
+  for (size_t i = 0; i < p1.size(); i++) {
+    if (status[i] == 1) {
+      kd_current.corners.emplace_back(p1[i].x, p1[i].y);
+      md.matches.emplace_back(i, match_id);
+      match_id++;
+    }
+  }
+}
+
+// TODO Update this function
+// Compute matches of current frame -> landmarks
+// Based on matches of current frame -> last frame
+void find_matches_landmarks_with_otpical_flow(const FrameCamId& fcid_last,
+                                              const MatchData& md_last,
+                                              const Landmarks& landmarks,
+                                              LandmarkMatchData& md) {
+  // If no match to last frame available
+  if (md_last.matches.size() == 0) return;
+
+  // For each landmarks, find featureId of last frame
+  // Map to featureId in new frame with md_last
+  // Map featureId last -> current frame
+  std::unordered_map<FeatureId, FeatureId> matches_map(md_last.matches.begin(),
+                                                       md_last.matches.end());
+
+  for (const auto& kv_lm : landmarks) {
+    const TrackId& trackId = kv_lm.first;
+    const FeatureTrack& obs = kv_lm.second.obs;
+
+    if (obs.count(fcid_last) > 0) {
+      // trackId -> last feature Id
+      const FeatureId& last_featureId = obs.at(fcid_last);
+      // last featureId -> current featureId
+      if (matches_map.count(last_featureId) > 0) {
+        const FeatureId& current_featureId = matches_map.at(last_featureId);
+        md.matches.emplace_back(current_featureId, trackId);
+      }
+    }
+  }
+}
 
 void find_matches_landmarks_with_otpical_flow(
     const pangolin::ManagedImage<uint8_t>& img_last,
@@ -261,6 +443,57 @@ void remove_old_keyframes_optical_flow(const FrameCamId fcidl,
                                        const int max_num_kfs, Cameras& cameras,
                                        Landmarks& landmarks,
                                        Landmarks& old_landmarks,
-                                       std::set<FrameId>& kf_frames) {}
+                                       std::set<FrameId>& kf_frames) {
+  kf_frames.emplace(fcidl.frame_id);
+
+  std::vector<FrameCamId> camera_frame_to_remove;
+  std::vector<TrackId> landmark_to_remove;
+  while (kf_frames.size() > max_num_kfs) {
+    // Get the current frameId to be removed --> set preserve the order (i.e.
+    // order by which item is added first)
+    FrameId cur_frame = *kf_frames.begin();
+
+    // Removed keyframes should be removed from cameras
+    /*
+     * Cameras: collection {imageId => Camera} for all cameras in the map
+     * - Cameras: std::map<FrameCamId, Camera, std::less<FrameCamId>,
+             Eigen::aligned_allocator<std::pair<const FrameCamId, Camera>>>
+    */
+    for (auto camera : cameras) {
+      if (camera.first.frame_id == cur_frame) {
+        // Remove the camera
+        for (auto& landmark : landmarks) {
+          landmark.second.obs.erase(camera.first);
+          // landmarks with no left observations should be moved to
+          // old_landmarks
+          if (landmark.second.obs.empty()) {
+            old_landmarks.insert(
+                std::make_pair(landmark.first, landmark.second));
+            // Add landmark with no lefft observation into vector storing
+            // TrackId landmark to be removed
+            landmark_to_remove.push_back(landmark.first);
+          }
+        }
+        // Add keyframes to be removed from cameras into vector storing
+        // FrameCamId keyframes to be removed
+        camera_frame_to_remove.push_back(camera.first);
+      }
+    }
+    // Remove the current keyframe from kf_frames
+    kf_frames.erase(cur_frame);
+
+    // Remove each of camera to be removed
+    for (auto removed_camera : camera_frame_to_remove) {
+      cameras.erase(removed_camera);
+    }
+    // Remove each of landmark to be removed in landmarks
+    // - It was added into old_landmarks instead
+    for (auto removed_landmark : landmark_to_remove) {
+      landmarks.erase(removed_landmark);
+    }
+    camera_frame_to_remove.clear();
+    landmark_to_remove.clear();
+  }
+}
 
 }  // namespace visnav
