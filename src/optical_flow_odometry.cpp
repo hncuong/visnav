@@ -100,7 +100,7 @@ std::atomic<bool> opt_finished{false};
 
 std::set<FrameId> kf_frames;
 
-std::shared_ptr<std::thread> opt_thread;
+// std::shared_ptr<std::thread> opt_thread;
 
 /// intrinsic calibration
 Calibration calib_cam;
@@ -145,6 +145,8 @@ KeypointsData kd_last;
 pangolin::ManagedImage<uint8_t> imgl_last;
 /// Flows
 Landmarks flows;
+/// Flows to show
+std::set<TrackId> flows_to_show;
 
 ///////////////////////////////////////////////////////////////////////////////
 /// GUI parameters
@@ -175,6 +177,9 @@ pangolin::Var<bool> show_epipolar("hidden.show_epipolar", false, true);
 pangolin::Var<bool> show_cameras3d("hidden.show_cameras", true, true);
 pangolin::Var<bool> show_points3d("hidden.show_points", true, true);
 pangolin::Var<bool> show_old_points3d("hidden.show_old_points3d", true, true);
+/// For showing Optical flows
+pangolin::Var<bool> show_flows("ui.show_flows", true, true);
+pangolin::Var<int> num_flows_to_draw("hidden.num_features", 10, 1, 100);
 
 //////////////////////////////////////////////
 /// Feature extraction and matching options
@@ -393,10 +398,6 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
   FrameCamId fcid(frame_id, cam_id);
 
   float text_row = 20;
-  // TODO Draw flow lines later
-  //  if (show_flow) {
-  //    pangolin::glDrawLine(c, c + r);
-  //  }
 
   if (show_detected) {
     glLineWidth(1.0);
@@ -411,15 +412,6 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
         Eigen::Vector2d c = cr.corners[i];
         //        double angle = cr.corner_angles[i];
         pangolin::glDrawCirclePerimeter(c[0], c[1], 3.0);
-
-        /*
-         * No draw angle for Optical flow one
-         */
-        //        Eigen::Vector2d r(3, 0);
-        //        Eigen::Rotation2Dd rot(angle);
-        //        r = rot * r;
-
-        //        pangolin::glDrawLine(c, c + r);
       }
 
       pangolin::GlFont::I()
@@ -436,41 +428,68 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
 
   /*
    * Draw some flows from start to current frame
+   * TODO Draw consistent set of flows
    */
-  bool show_flows = true;
+  //  show_flows = true;
   if (show_flows) {
     // TODO Pick random color
     glColor3f(0.0, 0.0, 1.0);  // blue
 
-    // Draw flows of current fcid to
-    size_t num_flows_to_draw = 10;
     size_t num_flows = flows.size();
-    size_t step = num_flows / num_flows_to_draw + 1;
-    size_t flow_cnt = 0;
-    size_t flow_draw_cnt = 0;
+    // TODO Choose conistent flows
+    // Fill it until it reach the numbers needed
+    if (flows_to_show.size() < num_flows_to_draw) {
+      size_t num_flows_to_add = num_flows_to_draw - flows_to_show.size();
+      size_t step = num_flows / num_flows_to_add + 1;
+      size_t flow_cnt = 0;
+      size_t flow_draw_cnt = 0;
 
-    for (const auto& kv_fl : flows) {
+      for (const auto& kv_fl : flows) {
+        // Only select some flows
+        if (flow_cnt % step == 0) {
+          const auto& trackId = kv_fl.first;
+          flows_to_show.emplace(trackId);
+          flow_draw_cnt++;
+        }
+      }
+      // Increaset flow counter
+      flow_cnt++;
+    }
+
+    /// Draw flows of current fcid to
+    size_t flow_draw_cnt = 0;
+    std::vector<TrackId> flows_to_discard;
+
+    for (const auto& trackId : flows_to_show) {
       // Only select some flows
-      if (flow_cnt % step == 0) {
-        const auto& trackId = kv_fl.first;
-        const auto& flow = kv_fl.second;
+      if (flows.count(trackId) == 0) {
+        flows_to_discard.emplace_back(trackId);
+      } else {
+        const auto& flow = flows.at(trackId);
 
         // If flow exist in the frame
         // Draw the point in the current frame
         // And draw flow back to the start
         if (flow.obs.count(fcid) > 0 && feature_corners.count(fcid) > 0) {
           const auto& featureId = flow.obs.at(fcid);
+
           const KeypointsData& cr = feature_corners.at(fcid);
           Eigen::Vector2d c = cr.corners[featureId];
           pangolin::glDrawCirclePerimeter(c[0], c[1], 3.0);
+
+          if (show_ids) {
+            pangolin::GlFont::I().Text("%d", trackId).Draw(c[0], c[1]);
+          }
 
           // Draw line to previous if exists
           FrameCamId previous_fcid(fcid.frame_id - 1, fcid.cam_id);
           while (flow.obs.count(previous_fcid) > 0 &&
                  feature_corners.count(previous_fcid) > 0) {
+            // Get previous frame featureId of the flow
             const auto& prev_featureId = flow.obs.at(previous_fcid);
             Eigen::Vector2d prev_c =
                 feature_corners.at(previous_fcid).corners[prev_featureId];
+            // Draw to previous
             pangolin::glDrawLine(c, prev_c);
 
             // Update previous frame keypoints and fcid
@@ -482,11 +501,10 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
           flow_draw_cnt++;
         }
       }
-      // Increaset flow counter
-      flow_cnt++;
     }
-    std::cout << "Draw " << flow_draw_cnt << " flows "
-              << " from " << flow_cnt << "\n";
+
+    // Discard die out flows
+    for (const auto& trackId : flows_to_discard) flows_to_show.erase(trackId);
   }
 
   if (show_matches || show_inliers) {
@@ -526,15 +544,6 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
           //          double angle = cr.corner_angles[c_idx];
           pangolin::glDrawCirclePerimeter(c[0], c[1], 3.0);
 
-          /*
-           * No angle for Optical flow
-           */
-          //          Eigen::Vector2d r(3, 0);
-          //          Eigen::Rotation2Dd rot(angle);
-          //          r = rot * r;
-
-          //          pangolin::glDrawLine(c, c + r);
-
           if (show_ids) {
             pangolin::GlFont::I().Text("%d", i).Draw(c[0], c[1]);
           }
@@ -560,13 +569,6 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
           Eigen::Vector2d c = cr.corners[c_idx];
           //          double angle = cr.corner_angles[c_idx];
           pangolin::glDrawCirclePerimeter(c[0], c[1], 3.0);
-
-          // No angle for OF
-          //          Eigen::Vector2d r(3, 0);
-          //          Eigen::Rotation2Dd rot(angle);
-          //          r = rot * r;
-
-          //          pangolin::glDrawLine(c, c + r);
 
           if (show_ids) {
             pangolin::GlFont::I().Text("%d", i).Draw(c[0], c[1]);
@@ -879,6 +881,8 @@ bool next_step() {
     optical_flows(imgl, imgr, kdl, kdr, md_stereo);
 
     // Change kd_last to kdl for next frame
+    // TODO keep only inliers of kd left; and eleminate duplicates keypoints
+    // (from last frame to current)
     kd_last = kdl;
     imgl_last.CopyFrom(imgl);
 
@@ -905,7 +909,8 @@ bool next_step() {
     // TODO Update find match landmark for Optical flow; landmark that does not
     // have obs last frame
     find_matches_landmarks_with_otpical_flow(fcid_last, md_last, flows, md);
-    std::cout << "Current exist " << flows.size() << " flows." << std::endl;
+    //    std::cout << "Current exist " << flows.size() << " flows." <<
+    //    std::endl;
 
     std::cout << "KF Found " << md.matches.size() << " matches." << std::endl;
     // TODO CHange to optical flow version
@@ -957,7 +962,8 @@ bool next_step() {
     find_matches_landmarks_with_otpical_flow(fcid_last, md_last, flows, md);
 
     std::cout << "Found " << md.matches.size() << " matches." << std::endl;
-    std::cout << "Current exist " << flows.size() << " flows." << std::endl;
+    //    std::cout << "Current exist " << flows.size() << " flows." <<
+    //    std::endl;
     // TODO Use Optical Flows version
     localize_camera(current_pose, calib_cam.intrinsics[0], kdl, landmarks,
                     reprojection_error_pnp_inlier_threshold_pixel, md);
@@ -979,7 +985,7 @@ bool next_step() {
     }
 
     if (!opt_running && opt_finished) {
-      opt_thread->join();
+      //      opt_thread->join();
       landmarks = landmarks_opt;
       cameras = cameras_opt;
       calib_cam = calib_cam_opt;
@@ -1077,15 +1083,27 @@ void optimize() {
 
   opt_running = true;
 
-  opt_thread.reset(new std::thread([fid, ba_options] {
-    std::set<FrameCamId> fixed_cameras = {{fid, 0}, {fid, 1}};
+  /*
+   * Try bundle adjustment in foregroun here
+   */
+  std::set<FrameCamId> fixed_cameras = {{fid, 0}, {fid, 1}};
 
-    bundle_adjustment(feature_corners, ba_options, fixed_cameras, calib_cam_opt,
-                      cameras_opt, landmarks_opt);
+  bundle_adjustment(feature_corners, ba_options, fixed_cameras, calib_cam_opt,
+                    cameras_opt, landmarks_opt);
 
-    opt_finished = true;
-    opt_running = false;
-  }));
+  opt_finished = true;
+  opt_running = false;
+
+  //  opt_thread.reset(new std::thread([fid, ba_options] {
+  //    std::set<FrameCamId> fixed_cameras = {{fid, 0}, {fid, 1}};
+
+  //    bundle_adjustment(feature_corners, ba_options, fixed_cameras,
+  //    calib_cam_opt,
+  //                      cameras_opt, landmarks_opt);
+
+  //    opt_finished = true;
+  //    opt_running = false;
+  //  }));
 
   // Update project info cache
   compute_projections();
