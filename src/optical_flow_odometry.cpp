@@ -125,13 +125,13 @@ Cameras cameras;
 Cameras cameras_opt;
 
 /// landmark positions and feature observations in current map
-Landmarks landmarks;
+// Flows landmarks;
 
 /// copy of landmarks for optimization in parallel thread
-Landmarks landmarks_opt;
+Flows landmarks_opt;
 
 /// landmark positions that were removed from the current map
-Landmarks old_landmarks;
+Flows old_landmarks;
 
 /// cashed info on reprojected landmarks; recomputed every time time from
 /// cameras, landmarks, and feature_tracks; used for visualization and
@@ -470,8 +470,8 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
         // If flow exist in the frame
         // Draw the point in the current frame
         // And draw flow back to the start
-        if (flow.obs.count(fcid) > 0 && feature_corners.count(fcid) > 0) {
-          const auto& featureId = flow.obs.at(fcid);
+        if (flow.flow.count(fcid) > 0 && feature_corners.count(fcid) > 0) {
+          const auto& featureId = flow.flow.at(fcid);
 
           const KeypointsData& cr = feature_corners.at(fcid);
           Eigen::Vector2d c = cr.corners[featureId];
@@ -483,10 +483,10 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
 
           // Draw line to previous if exists
           FrameCamId previous_fcid(fcid.frame_id - 1, fcid.cam_id);
-          while (flow.obs.count(previous_fcid) > 0 &&
+          while (flow.flow.count(previous_fcid) > 0 &&
                  feature_corners.count(previous_fcid) > 0) {
             // Get previous frame featureId of the flow
-            const auto& prev_featureId = flow.obs.at(previous_fcid);
+            const auto& prev_featureId = flow.flow.at(previous_fcid);
             Eigen::Vector2d prev_c =
                 feature_corners.at(previous_fcid).corners[prev_featureId];
             // Draw to previous
@@ -742,10 +742,10 @@ void draw_scene() {
   }
 
   // render points
-  if (show_points3d && landmarks.size() > 0) {
+  if (show_points3d && flows.size() > 0) {
     glPointSize(3.0);
     glBegin(GL_POINTS);
-    for (const auto& kv_lm : landmarks) {
+    for (const auto& kv_lm : flows) {
       const bool in_cam_1 = kv_lm.second.obs.count(fcid1) > 0;
       const bool in_cam_2 = kv_lm.second.obs.count(fcid2) > 0;
 
@@ -910,18 +910,16 @@ bool next_step() {
     //    feature_matches[std::make_pair(fcidl, fcidr)] = md_stereo;
 
     LandmarkMatchData md;
-    // TODO CHange to optical flow version
-    // TODO Update find match landmark for Optical flow; landmark that does not
+    // CHange to optical flow version
+    // Update find match landmark for Optical flow; landmark that does not
     // have obs last frame
-    // FIXME Try to merge flows and landmarks
+    // Try to merge flows and landmarks
     find_matches_landmarks_with_otpical_flow(fcid_last, md_last, flows, md);
-    //    std::cout << "Current exist " << flows.size() << " flows." <<
-    //    std::endl;
 
     std::cout << "KF Found " << md.matches.size() << " matches." << std::endl;
     // TODO CHange to optical flow version
     localize_camera_optical_flow(
-        current_pose, calib_cam.intrinsics[0], kdl, landmarks,
+        current_pose, calib_cam.intrinsics[0], kdl, flows,
         reprojection_error_pnp_inlier_threshold_pixel, md);
 
     current_pose = md.T_w_c;
@@ -930,11 +928,21 @@ bool next_step() {
     cameras[fcidr].T_w_c = current_pose * T_0_1;
     // TODO CHange to optical flow version
     add_new_landmarks_optical_flow(fcidl, fcidr, kdl, kdr, calib_cam, md_stereo,
-                                   md, landmarks, next_landmark_id, flows);
+                                   md, flows, next_landmark_id);
     // TODO CHange to optical flow version
-    remove_old_keyframes_optical_flow(fcidl, max_num_kfs, cameras, landmarks,
+    remove_old_keyframes_optical_flow(fcidl, max_num_kfs, cameras, flows,
                                       old_landmarks, kf_frames);
     optimize();
+
+    if (!opt_running && opt_finished) {
+      //      opt_thread->join();
+      // TODO If move to thread; for flows update only T_w_c
+      flows = landmarks_opt;
+      cameras = cameras_opt;
+      calib_cam = calib_cam_opt;
+
+      opt_finished = false;
+    }
 
     current_pose = cameras[fcidl].T_w_c;
 
@@ -969,11 +977,9 @@ bool next_step() {
     find_matches_landmarks_with_otpical_flow(fcid_last, md_last, flows, md);
 
     std::cout << "Found " << md.matches.size() << " matches." << std::endl;
-    //    std::cout << "Current exist " << flows.size() << " flows." <<
-    //    std::endl;
-    // TODO Use Optical Flows version
+
     localize_camera_optical_flow(
-        current_pose, calib_cam.intrinsics[0], kdl, landmarks,
+        current_pose, calib_cam.intrinsics[0], kdl, flows,
         reprojection_error_pnp_inlier_threshold_pixel, md);
 
     current_pose = md.T_w_c;
@@ -994,14 +1000,14 @@ bool next_step() {
       std::cout << "Take new keyframe next step!\n";
     }
 
-    if (!opt_running && opt_finished) {
-      //      opt_thread->join();
-      landmarks = landmarks_opt;
-      cameras = cameras_opt;
-      calib_cam = calib_cam_opt;
+    //    if (!opt_running && opt_finished) {
+    //      //      opt_thread->join();
+    //      flows = landmarks_opt;
+    //      cameras = cameras_opt;
+    //      calib_cam = calib_cam_opt;
 
-      opt_finished = false;
-    }
+    //      opt_finished = false;
+    //    }
 
     // update image views
     change_display_to_image(fcidl);
@@ -1017,7 +1023,7 @@ bool next_step() {
 void compute_projections() {
   image_projections.clear();
 
-  for (const auto& kv_lm : landmarks) {
+  for (const auto& kv_lm : flows) {
     const TrackId track_id = kv_lm.first;
 
     for (const auto& kv_obs : kv_lm.second.obs) {
@@ -1065,12 +1071,12 @@ void compute_projections() {
 // Optimize the active map with bundle adjustment
 void optimize() {
   size_t num_obs = 0;
-  for (const auto& kv : landmarks) {
+  for (const auto& kv : flows) {
     num_obs += kv.second.obs.size();
   }
 
   std::cerr << "Optimizing map with " << cameras.size() << " cameras, "
-            << landmarks.size() << " points and " << num_obs << " observations."
+            << flows.size() << " points and " << num_obs << " observations."
             << std::endl;
 
   // Fix oldest two cameras to fix SE3 and scale gauge. Making the whole second
@@ -1089,7 +1095,7 @@ void optimize() {
 
   calib_cam_opt = calib_cam;
   cameras_opt = cameras;
-  landmarks_opt = landmarks;
+  landmarks_opt = flows;
 
   opt_running = true;
 
@@ -1098,8 +1104,8 @@ void optimize() {
    */
   std::set<FrameCamId> fixed_cameras = {{fid, 0}, {fid, 1}};
 
-  bundle_adjustment(feature_corners, ba_options, fixed_cameras, calib_cam_opt,
-                    cameras_opt, landmarks_opt);
+  bundle_adjustment_for_flows(feature_corners, ba_options, fixed_cameras,
+                              calib_cam_opt, cameras_opt, landmarks_opt);
 
   opt_finished = true;
   opt_running = false;

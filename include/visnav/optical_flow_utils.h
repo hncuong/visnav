@@ -7,6 +7,7 @@
 #include <visnav/common_types.h>
 #include <visnav/calibration.h>
 #include <visnav/keypoints.h>
+#include <visnav/map_utils.h>
 
 #include <opencv2/core.hpp>
 #include <opencv2/video.hpp>
@@ -99,7 +100,7 @@ void find_matches_landmarks_with_otpical_flow(const FrameCamId& fcid_last,
   // If no match to last frame available
   if (md_last.matches.size() == 0) return;
 
-  // For each landmarks, find featureId of last frame
+  // For each flows, find featureId of last frame
   // Map to featureId in new frame with md_last
   // Map featureId last -> current frame
   std::unordered_map<FeatureId, FeatureId> matches_map(md_last.matches.begin(),
@@ -108,13 +109,13 @@ void find_matches_landmarks_with_otpical_flow(const FrameCamId& fcid_last,
   std::vector<TrackId> flow_to_discard;
   for (auto& kv_lm : flows) {
     const TrackId& trackId = kv_lm.first;
-    FeatureTrack& obs = kv_lm.second.obs;
+    FeatureTrack& flow = kv_lm.second.flow;
 
-    // Actually not expected to have obs of last = 0
+    // Actually not expected to have flow of last = 0
     // Cause we gonna kill dieout flows later
-    if (obs.count(fcid_last) > 0) {
+    if (flow.count(fcid_last) > 0) {
       // trackId -> last feature Id
-      const FeatureId& last_featureId = obs.at(fcid_last);
+      const FeatureId& last_featureId = flow.at(fcid_last);
 
       // If there is a match: last featureId -> current featureId
       if (matches_map.count(last_featureId) > 0) {
@@ -127,7 +128,7 @@ void find_matches_landmarks_with_otpical_flow(const FrameCamId& fcid_last,
         if (current_featureId < 0)
           std::cout << "Invalid: Fcurrent_featureId = " << current_featureId
                     << "\n";
-        obs.emplace(fcid_current, current_featureId);
+        flow.emplace(fcid_current, current_featureId);
       } else {
         // If there is not match
         // Discard the flows
@@ -137,15 +138,16 @@ void find_matches_landmarks_with_otpical_flow(const FrameCamId& fcid_last,
   }
 
   // Now discard dieout flows
-  for (const auto& trackId : flow_to_discard) {
-    flows.erase(trackId);
-  }
+  // TODO DON'T discard for now
+  //  for (const auto& trackId : flow_to_discard) {
+  //    flows.erase(trackId);
+  //  }
 }
 
 void localize_camera_optical_flow(
     const Sophus::SE3d& current_pose,
     const std::shared_ptr<AbstractCamera<double>>& cam,
-    const KeypointsData& kdl, const Landmarks& landmarks,
+    const KeypointsData& kdl, const Flows& flows,
     const double reprojection_error_pnp_inlier_threshold_pixel,
     LandmarkMatchData& md) {
   md.inliers.clear();
@@ -169,14 +171,14 @@ void localize_camera_optical_flow(
 
   /*
    * - Adding unprojected points from the camera into bearing_vectors
-   * - Adding landmarks at specific tracks into points
+   * - Adding flows at specific tracks into points
    * - pass bearing_vectors and points into CentralAbsoluteAdapter
    */
 
   for (auto& kv : md.matches) {
     FeatureId feature_id = kv.first;
     const auto& trackId = kv.second;
-    points_t.push_back(landmarks.at(trackId).p);
+    points_t.push_back(flows.at(trackId).p);
 
     Eigen::Vector3d unprojected_point =
         cam->unproject(kdl.corners.at(feature_id));
@@ -243,13 +245,13 @@ void localize_camera_optical_flow(
 }
 
 /*
- * Add new landmarks and flows for Optical flows
+ * Add new flows and flows for Optical flows
  */
 void add_new_landmarks_optical_flow(
     const FrameCamId fcidl, const FrameCamId fcidr, const KeypointsData& kdl,
     const KeypointsData& kdr, const Calibration& calib_cam,
-    const MatchData& md_stereo, const LandmarkMatchData& md,
-    Landmarks& landmarks, TrackId& next_landmark_id, Flows& flows) {
+    const MatchData& md_stereo, const LandmarkMatchData& md, Flows& flows,
+    TrackId& next_landmark_id) {
   // input should be stereo pair
   assert(fcidl.cam_id == 0);
   assert(fcidr.cam_id == 1);
@@ -264,7 +266,7 @@ void add_new_landmarks_optical_flow(
   std::unordered_map<FeatureId, FeatureId> stereo_inliers_map(
       stereo_inliers.begin(), stereo_inliers.end());
   //  const FeatureId LANDMARK_EXIST = -2;
-  std::set<FeatureId> featureExistInLandmarks;
+  std::set<FeatureId> featureExistInflows;
 
   // For each landmark inliers add observer
   for (const auto& feature_n_Track : landmark_inliers) {
@@ -275,14 +277,14 @@ void add_new_landmarks_optical_flow(
     // DEBUG if featureId_left = -1
     if (featureId_left < 0)
       std::cout << "Invalid: FeatureId left match = " << featureId_left << "\n";
-    landmarks.at(trackId).obs.emplace(fcidl, featureId_left);
+    flows.at(trackId).obs.emplace(fcidl, featureId_left);
     if (stereo_inliers_map.count(featureId_left) > 0) {
-      landmarks.at(trackId).obs.emplace(fcidr,
-                                        stereo_inliers_map.at(featureId_left));
+      flows.at(trackId).obs.emplace(fcidr,
+                                    stereo_inliers_map.at(featureId_left));
       // Set this in stereo_inliers_map to -1 to mark that it already exist in
       // landmark
       //      stereo_inliers_map.at(featureId_left) = LANDMARK_EXIST;
-      featureExistInLandmarks.emplace(featureId_left);
+      featureExistInflows.emplace(featureId_left);
     }
   }
 
@@ -310,22 +312,19 @@ void add_new_landmarks_optical_flow(
     // TODO Check if stereo_inliers not Filter -1 yet
     const auto& featureId_lr = stereo_inliers.at(i);
     // If observer is not in landmark
-    if (featureExistInLandmarks.count(featureId_lr.first) == 0) {
+    if (featureExistInflows.count(featureId_lr.first) == 0) {
       opengv::point_t p =
           T_w_c * opengv::triangulation::triangulate(adapter, i);
 
-      Landmark lm;
       Flow flow;
-      lm.p = p;
+      flow.p = p;
 
-      lm.obs.emplace(fcidl, featureId_lr.first);
-      lm.obs.emplace(fcidr, featureId_lr.second);
       flow.obs.emplace(fcidl, featureId_lr.first);
       flow.obs.emplace(fcidr, featureId_lr.second);
+      flow.flow.emplace(fcidl, featureId_lr.first);
 
       // Add new landmark
       // and flow
-      landmarks.emplace(next_landmark_id, lm);
       flows.emplace(next_landmark_id, flow);
 
       next_landmark_id++;
@@ -336,15 +335,14 @@ void add_new_landmarks_optical_flow(
 // TODO Update this function
 void remove_old_keyframes_optical_flow(const FrameCamId fcidl,
                                        const int max_num_kfs, Cameras& cameras,
-                                       Landmarks& landmarks,
-                                       Landmarks& old_landmarks,
+                                       Flows& flows, Flows& old_flows,
                                        std::set<FrameId>& kf_frames) {
   kf_frames.emplace(fcidl.frame_id);
 
   // Find old keyframes to be removed
   if (kf_frames.size() <= max_num_kfs) return;
 
-  std::vector<TrackId> to_remove_landmarks;
+  std::vector<TrackId> to_remove_flows;
 
   while (kf_frames.size() > max_num_kfs) {
     auto min_frameId = *kf_frames.begin();
@@ -356,7 +354,7 @@ void remove_old_keyframes_optical_flow(const FrameCamId fcidl,
     if (cameras.count(min_fcidr) > 0) cameras.erase(min_fcidr);
 
     // Remove the observation
-    for (auto& track_lm : landmarks) {
+    for (auto& track_lm : flows) {
       const auto& trackId = track_lm.first;
       auto& landmark = track_lm.second;
 
@@ -365,8 +363,8 @@ void remove_old_keyframes_optical_flow(const FrameCamId fcidl,
 
       // If no observer left
       if (landmark.obs.size() == 0) {
-        old_landmarks.emplace(trackId, landmark);
-        to_remove_landmarks.emplace_back(trackId);
+        old_flows.emplace(trackId, landmark);
+        to_remove_flows.emplace_back(trackId);
       }
     }
 
@@ -374,7 +372,97 @@ void remove_old_keyframes_optical_flow(const FrameCamId fcidl,
     kf_frames.erase(min_frameId);
   }
 
-  for (const auto& trackId : to_remove_landmarks) landmarks.erase(trackId);
+  for (const auto& trackId : to_remove_flows) flows.erase(trackId);
+}
+
+// Run bundle adjustment to optimize cameras, points, and optionally intrinsics
+void bundle_adjustment_for_flows(const Corners& feature_corners,
+                                 const BundleAdjustmentOptions& options,
+                                 const std::set<FrameCamId>& fixed_cameras,
+                                 Calibration& calib_cam, Cameras& cameras,
+                                 Flows& flows) {
+  ceres::Problem problem;
+
+  // TODO SHEET 4: Setup optimization problem
+  // Add Params Block and Set Constant for Intrinsics
+  // Then Add Param Block for all Camera poses + 3D flows
+  // Set Camera in fixed_cameras to Constant
+  problem.AddParameterBlock(calib_cam.intrinsics.at(0)->data(), 8);
+  problem.AddParameterBlock(calib_cam.intrinsics.at(1)->data(), 8);
+  if (!options.optimize_intrinsics) {
+    problem.SetParameterBlockConstant(calib_cam.intrinsics.at(0)->data());
+    problem.SetParameterBlockConstant(calib_cam.intrinsics.at(1)->data());
+  }
+
+  // For each Camera pose
+  for (auto& kv : cameras) {
+    problem.AddParameterBlock(kv.second.T_w_c.data(),
+                              Sophus::SE3d::num_parameters,
+                              new Sophus::test::LocalParameterizationSE3);
+  }
+  for (const auto& fcid : fixed_cameras) {
+    problem.SetParameterBlockConstant(cameras.at(fcid).T_w_c.data());
+  }
+
+  // For each 3D landmark
+  for (auto& kv : flows) {
+    problem.AddParameterBlock(kv.second.p.data(), 3);
+  }
+
+  // Add residual blocks
+  // For each landmark: trackid ->
+  // Look for it feature track: fcid ->
+  for (auto& kv : flows) {
+    auto& p_3d = kv.second.p;
+    const auto& lm = kv.second.obs;
+
+    for (const auto& fcid_featureId : lm) {
+      // Get respected Pose of Cam and 2d point
+      // And intrinsic
+      const auto& fcid = fcid_featureId.first;
+      const auto& featureId = fcid_featureId.second;
+
+      auto& T_w_c = cameras.at(fcid).T_w_c;
+      // FIXME featureId -1 case; fcid 140 1;
+      const auto& p_2d = feature_corners.at(fcid).corners.at(featureId);
+      auto& intrinsic = calib_cam.intrinsics.at(fcid.cam_id);
+      const auto& cam_model = intrinsic->name();
+
+      // TODO Check How to Get Cam mode
+      BundleAdjustmentReprojectionCostFunctor* c =
+          new BundleAdjustmentReprojectionCostFunctor(p_2d, cam_model);
+      ceres::CostFunction* cost_function = new ceres::AutoDiffCostFunction<
+          BundleAdjustmentReprojectionCostFunctor, 2,
+          Sophus::SE3d::num_parameters, 3, 8>(c);
+      // TODO Huber loss for regularize
+      //      ceres::LossFunction* lost_function = nullptr;
+      if (options.use_huber) {
+        problem.AddResidualBlock(cost_function,
+                                 new ceres::HuberLoss(options.huber_parameter),
+                                 T_w_c.data(), p_3d.data(), intrinsic->data());
+      } else {
+        problem.AddResidualBlock(cost_function, NULL, T_w_c.data(), p_3d.data(),
+                                 intrinsic->data());
+      }
+    }
+  }
+
+  // Solve
+  ceres::Solver::Options ceres_options;
+  ceres_options.max_num_iterations = options.max_num_iterations;
+  ceres_options.linear_solver_type = ceres::SPARSE_SCHUR;
+  ceres_options.num_threads = std::thread::hardware_concurrency();
+  ceres::Solver::Summary summary;
+  Solve(ceres_options, &problem, &summary);
+  switch (options.verbosity_level) {
+    // 0: silent
+    case 1:
+      std::cout << summary.BriefReport() << std::endl;
+      break;
+    case 2:
+      std::cout << summary.FullReport() << std::endl;
+      break;
+  }
 }
 
 }  // namespace visnav

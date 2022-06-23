@@ -823,7 +823,10 @@ bool next_step() {
 
     feature_corners[fcidl] = kdl;
     feature_corners[fcidr] = kdr;
-    feature_matches[std::make_pair(fcidl, fcidr)] = md_stereo;
+    // TODO update to insert
+    feature_matches.insert(
+        std::make_pair(std::make_pair(fcidl, fcidr), md_stereo));
+    //    feature_matches[std::make_pair(fcidl, fcidr)] = md_stereo;
 
     LandmarkMatchData md;
 
