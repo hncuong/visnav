@@ -89,12 +89,12 @@ void optical_flows(const pangolin::ManagedImage<uint8_t>& img_last,
   }
 }
 
-// Compute matches of current frame -> flows
-// Based on matches of current frame -> last frame
-// Remove flows that has no match in current frame
+/// Compute matches of current frame -> flows
+/// Based on matches of current frame -> last frame
+/// Remove flows that has no match in current frame
 void find_matches_landmarks_with_otpical_flow(const FrameCamId& fcid_last,
                                               const MatchData& md_last,
-                                              Landmarks& flows,
+                                              Flows& flows,
                                               LandmarkMatchData& md) {
   // If no match to last frame available
   if (md_last.matches.size() == 0) return;
@@ -124,6 +124,9 @@ void find_matches_landmarks_with_otpical_flow(const FrameCamId& fcid_last,
         // Add observer for the flow
         FrameCamId fcid_current =
             FrameCamId(fcid_last.frame_id + 1, fcid_last.cam_id);
+        if (current_featureId < 0)
+          std::cout << "Invalid: Fcurrent_featureId = " << current_featureId
+                    << "\n";
         obs.emplace(fcid_current, current_featureId);
       } else {
         // If there is not match
@@ -139,8 +142,6 @@ void find_matches_landmarks_with_otpical_flow(const FrameCamId& fcid_last,
   }
 }
 
-// Remove the keypoints that die out in the
-// TODO Update this function
 void localize_camera_optical_flow(
     const Sophus::SE3d& current_pose,
     const std::shared_ptr<AbstractCamera<double>>& cam,
@@ -248,7 +249,7 @@ void add_new_landmarks_optical_flow(
     const FrameCamId fcidl, const FrameCamId fcidr, const KeypointsData& kdl,
     const KeypointsData& kdr, const Calibration& calib_cam,
     const MatchData& md_stereo, const LandmarkMatchData& md,
-    Landmarks& landmarks, TrackId& next_landmark_id, Landmarks& flows) {
+    Landmarks& landmarks, TrackId& next_landmark_id, Flows& flows) {
   // input should be stereo pair
   assert(fcidl.cam_id == 0);
   assert(fcidr.cam_id == 1);
@@ -262,7 +263,8 @@ void add_new_landmarks_optical_flow(
   const auto& landmark_inliers = md.inliers;       // FeatureId, TrackId
   std::unordered_map<FeatureId, FeatureId> stereo_inliers_map(
       stereo_inliers.begin(), stereo_inliers.end());
-  const FeatureId LANDMARK_EXIST = -1;
+  //  const FeatureId LANDMARK_EXIST = -2;
+  std::set<FeatureId> featureExistInLandmarks;
 
   // For each landmark inliers add observer
   for (const auto& feature_n_Track : landmark_inliers) {
@@ -270,13 +272,17 @@ void add_new_landmarks_optical_flow(
     const auto& trackId = feature_n_Track.second;
 
     // Add observation
+    // DEBUG if featureId_left = -1
+    if (featureId_left < 0)
+      std::cout << "Invalid: FeatureId left match = " << featureId_left << "\n";
     landmarks.at(trackId).obs.emplace(fcidl, featureId_left);
     if (stereo_inliers_map.count(featureId_left) > 0) {
       landmarks.at(trackId).obs.emplace(fcidr,
                                         stereo_inliers_map.at(featureId_left));
       // Set this in stereo_inliers_map to -1 to mark that it already exist in
       // landmark
-      stereo_inliers_map.at(featureId_left) = LANDMARK_EXIST;
+      //      stereo_inliers_map.at(featureId_left) = LANDMARK_EXIST;
+      featureExistInLandmarks.emplace(featureId_left);
     }
   }
 
@@ -301,14 +307,17 @@ void add_new_landmarks_optical_flow(
       bearingVectors0, bearingVectors1, t_0_1, R_0_1);
 
   for (size_t i = 0; i < stereo_inliers.size(); i++) {
+    // TODO Check if stereo_inliers not Filter -1 yet
     const auto& featureId_lr = stereo_inliers.at(i);
     // If observer is not in landmark
-    if (stereo_inliers_map.at(featureId_lr.first) != LANDMARK_EXIST) {
+    if (featureExistInLandmarks.count(featureId_lr.first) == 0) {
       opengv::point_t p =
           T_w_c * opengv::triangulation::triangulate(adapter, i);
 
-      Landmark lm, flow;
+      Landmark lm;
+      Flow flow;
       lm.p = p;
+
       lm.obs.emplace(fcidl, featureId_lr.first);
       lm.obs.emplace(fcidr, featureId_lr.second);
       flow.obs.emplace(fcidl, featureId_lr.first);

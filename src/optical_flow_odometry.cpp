@@ -144,7 +144,7 @@ KeypointsData kd_last;
 /// Last image
 pangolin::ManagedImage<uint8_t> imgl_last;
 /// Flows
-Landmarks flows;
+Flows flows;
 /// Flows to show
 std::set<TrackId> flows_to_show;
 
@@ -877,8 +877,12 @@ bool next_step() {
     // Output:
     // kdl, kdr
     // md_stereo
-    add_keypoints(imgl, kdl, num_features_per_image);
-    optical_flows(imgl, imgr, kdl, kdr, md_stereo);
+    add_keypoints(
+        imgl, kdl,
+        num_features_per_image);  // TODO Check if we need wrapper function here
+    optical_flows(
+        imgl, imgr, kdl, kdr,
+        md_stereo);  // TODO Maybe just for keypoints (but not old flows)
 
     // Change kd_last to kdl for next frame
     // TODO keep only inliers of kd left; and eleminate duplicates keypoints
@@ -896,6 +900,7 @@ bool next_step() {
 
     std::cout << "KF Found " << md_stereo.inliers.size() << " stereo-matches."
               << std::endl;
+    // TODO Update kd_last for the next frame
 
     feature_corners[fcidl] = kdl;
     feature_corners[fcidr] = kdr;
@@ -908,14 +913,16 @@ bool next_step() {
     // TODO CHange to optical flow version
     // TODO Update find match landmark for Optical flow; landmark that does not
     // have obs last frame
+    // FIXME Try to merge flows and landmarks
     find_matches_landmarks_with_otpical_flow(fcid_last, md_last, flows, md);
     //    std::cout << "Current exist " << flows.size() << " flows." <<
     //    std::endl;
 
     std::cout << "KF Found " << md.matches.size() << " matches." << std::endl;
     // TODO CHange to optical flow version
-    localize_camera(current_pose, calib_cam.intrinsics[0], kdl, landmarks,
-                    reprojection_error_pnp_inlier_threshold_pixel, md);
+    localize_camera_optical_flow(
+        current_pose, calib_cam.intrinsics[0], kdl, landmarks,
+        reprojection_error_pnp_inlier_threshold_pixel, md);
 
     current_pose = md.T_w_c;
 
@@ -925,8 +932,8 @@ bool next_step() {
     add_new_landmarks_optical_flow(fcidl, fcidr, kdl, kdr, calib_cam, md_stereo,
                                    md, landmarks, next_landmark_id, flows);
     // TODO CHange to optical flow version
-    remove_old_keyframes(fcidl, max_num_kfs, cameras, landmarks, old_landmarks,
-                         kf_frames);
+    remove_old_keyframes_optical_flow(fcidl, max_num_kfs, cameras, landmarks,
+                                      old_landmarks, kf_frames);
     optimize();
 
     current_pose = cameras[fcidl].T_w_c;
@@ -965,8 +972,9 @@ bool next_step() {
     //    std::cout << "Current exist " << flows.size() << " flows." <<
     //    std::endl;
     // TODO Use Optical Flows version
-    localize_camera(current_pose, calib_cam.intrinsics[0], kdl, landmarks,
-                    reprojection_error_pnp_inlier_threshold_pixel, md);
+    localize_camera_optical_flow(
+        current_pose, calib_cam.intrinsics[0], kdl, landmarks,
+        reprojection_error_pnp_inlier_threshold_pixel, md);
 
     current_pose = md.T_w_c;
 
@@ -978,6 +986,8 @@ bool next_step() {
                 << " - opt_running " << opt_running << " opt_finished "
                 << opt_finished << "\n";
     }
+
+    // TODO Using grid to update flows; take keyframe must be true here
     if (int(md.inliers.size()) < new_kf_min_inliers && !opt_running &&
         !opt_finished) {
       take_keyframe = true;
