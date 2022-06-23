@@ -59,6 +59,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <visnav/matching_utils.h>
 #include <visnav/vo_utils.h>
 #include <visnav/optical_flow_utils.h>
+#include <visnav/of_grid.h>
 
 #include <visnav/gui_helper.h>
 #include <visnav/tracks.h>
@@ -857,32 +858,40 @@ bool next_step() {
 
   const Sophus::SE3d T_0_1 = calib_cam.T_i_c[0].inverse() * calib_cam.T_i_c[1];
 
+  FrameCamId fcidl(current_frame, 0), fcidr(current_frame, 1);
+  FrameCamId fcid_last(current_frame - 1, 0);
+  KeypointsData kdl;
+
+  pangolin::ManagedImage<uint8_t> imgl = pangolin::LoadImage(images[fcidl]);
+  std::cout << "NEXT STEP: Processing " << fcidl << "\n";
+
+  // 1st: Flow from last frame to current frame
+  MatchData md_last;
+  optical_flows(imgl_last, imgl, kd_last, kdl, md_last);
+
+  /// Examine to add new flows by grids
+  /// If number of empty cells cross a threshold * total_cells
+  /// Then try to create new flows in empty cells
+  size_t num_bin_x = 3;
+  size_t num_bin_y = 3;
+  double empty_cells_thresh = 0.0;
+  //  take_keyframe = add_flows_on_grids(imgl, kdl, num_features_per_image,
+  //                                     num_bin_x, num_bin_y,
+  //                                     empty_cells_thresh);
+
   if (take_keyframe) {
     take_keyframe = false;
 
-    FrameCamId fcidl(current_frame, 0), fcidr(current_frame, 1);
-    FrameCamId fcid_last(current_frame - 1, 0);
     MatchData md_stereo;
-    KeypointsData kdl, kdr;
+    KeypointsData kdr;
 
-    pangolin::ManagedImage<uint8_t> imgl = pangolin::LoadImage(images[fcidl]);
     pangolin::ManagedImage<uint8_t> imgr = pangolin::LoadImage(images[fcidr]);
-
-    // 1st: Flow from last frame to current frame
-    MatchData md_last;
-    optical_flows(imgl_last, imgl, kd_last, kdl, md_last);
 
     // TODO Add Detect keypoints left image
     // Optical Flow to find keypoints and stereo matches to right image
-    // Output:
-    // kdl, kdr
-    // md_stereo
-    add_keypoints(
-        imgl, kdl,
-        num_features_per_image);  // TODO Check if we need wrapper function here
-    optical_flows(
-        imgl, imgr, kdl, kdr,
-        md_stereo);  // TODO Maybe just for keypoints (but not old flows)
+
+    add_keypoints(imgl, kdl, num_features_per_image);
+    optical_flows(imgl, imgr, kdl, kdr, md_stereo);
 
     // Change kd_last to kdl for next frame
     // TODO keep only inliers of kd left; and eleminate duplicates keypoints
@@ -900,14 +909,13 @@ bool next_step() {
 
     std::cout << "KF Found " << md_stereo.inliers.size() << " stereo-matches."
               << std::endl;
-    // TODO Update kd_last for the next frame
 
     feature_corners[fcidl] = kdl;
     feature_corners[fcidr] = kdr;
-    // TODO update to insert
     feature_matches.insert(
         std::make_pair(std::make_pair(fcidl, fcidr), md_stereo));
-    //    feature_matches[std::make_pair(fcidl, fcidr)] = md_stereo;
+
+    // TODO Keep only inliers match stereo of kdl??? Do we need it or not
 
     LandmarkMatchData md;
     // CHange to optical flow version
@@ -955,17 +963,6 @@ bool next_step() {
     current_frame++;
     return true;
   } else {
-    FrameCamId fcidl(current_frame, 0), fcidr(current_frame, 1);
-    FrameCamId fcid_last(current_frame - 1, 0);
-
-    KeypointsData kdl;
-
-    pangolin::ManagedImage<uint8_t> imgl = pangolin::LoadImage(images[fcidl]);
-    // TODO Change to Use Optical flows from last frame -> current frame
-    // 1st: Flow from last frame to current frame
-    MatchData md_last;
-    optical_flows(imgl_last, imgl, kd_last, kdl, md_last);
-
     // Change kd_last to kdl for next frame
     kd_last = kdl;
     imgl_last.CopyFrom(imgl);
@@ -984,20 +981,12 @@ bool next_step() {
 
     current_pose = md.T_w_c;
 
-    // TODO When number flows fall under a threshold
-    if (int(md.inliers.size()) < new_kf_min_inliers) {
-      std::cout << "Found " << md.inliers.size() << " inliers matches."
-                << std::endl;
-      std::cout << "Hope to take new keyframe now!"
-                << " - opt_running " << opt_running << " opt_finished "
-                << opt_finished << "\n";
-    }
-
-    // TODO Using grid to update flows; take keyframe must be true here
+    // TODO Use Grid to check. Comment this
     if (int(md.inliers.size()) < new_kf_min_inliers && !opt_running &&
         !opt_finished) {
+      std::cout << "Found " << md.inliers.size() << " inliers matches."
+                << "Take new keyframe next step!\n";
       take_keyframe = true;
-      std::cout << "Take new keyframe next step!\n";
     }
 
     //    if (!opt_running && opt_finished) {
