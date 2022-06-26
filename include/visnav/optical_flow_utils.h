@@ -63,7 +63,7 @@ void optical_flows(const pangolin::ManagedImage<uint8_t>& img_last,
   cv::Mat frame(img_current.h, img_current.w, CV_8U, img_current.ptr);
 
   // Keypoints data
-  std::vector<cv::Point2f> p0, p1;
+  std::vector<cv::Point2f> p0, p1, ptmp;
   p0.reserve(kd_last.corners.size());
   p1.reserve(kd_last.corners.size());
   for (size_t i = 0; i < kd_last.corners.size(); i++) {
@@ -75,21 +75,50 @@ void optical_flows(const pangolin::ManagedImage<uint8_t>& img_last,
   std::vector<float> err;
   cv::TermCriteria criteria = cv::TermCriteria(
       (cv::TermCriteria::COUNT) + (cv::TermCriteria::EPS), 10, 0.03);
+  cv::Size windowSize(15, 15);
+  int pyramid_level = 2;
+  double distance_threshold = 10.0;
 
-  cv::calcOpticalFlowPyrLK(old_frame, frame, p0, p1, status, err,
-                           cv::Size(15, 15), 2, criteria);
+  std::vector<cv::Mat> old_frame_pyr, frame_pyr;
+
+  cv::buildOpticalFlowPyramid(old_frame, old_frame_pyr, windowSize,
+                              pyramid_level);
+  cv::buildOpticalFlowPyramid(frame, frame_pyr, windowSize, pyramid_level);
+
+  cv::calcOpticalFlowPyrLK(old_frame_pyr, frame_pyr, p0, p1, status, err,
+                           windowSize, pyramid_level, criteria);
+
+  cv::calcOpticalFlowPyrLK(frame_pyr, old_frame_pyr, p1, ptmp, status, err,
+                           windowSize, pyramid_level, criteria);
 
   // TODO Inverse optical flows
 
   // Convert results to current_frame_kd and Match data
   int match_id = 0;
-  for (size_t i = 0; i < p1.size(); i++) {
+  //  for (size_t i = 0; i < p1.size(); i++) {
+  //    if (status[i] == 1) {
+  //      kd_current.corners.emplace_back(p1[i].x, p1[i].y);
+  //      md.matches.emplace_back(i, match_id);
+  //      match_id++;
+  //    }
+  //  }
+
+  for (int i = 0; i < ptmp.size(); i++) {
     if (status[i] == 1) {
-      kd_current.corners.emplace_back(p1[i].x, p1[i].y);
-      md.matches.emplace_back(i, match_id);
+      Eigen::Vector2d diff(std::abs((ptmp[i] - p0[i]).x),
+                           std::abs((ptmp[i] - p0[i]).y));
+      Eigen::Vector2d right_keypoint(p1[i].x, p1[i].y);
+
+      kd_current.corners.push_back(right_keypoint);
+      if ((diff.allFinite()) && (diff.norm() < distance_threshold)) {
+        md.matches.push_back(std::make_pair(i, match_id));
+      }
       match_id++;
     }
   }
+  std::cout << "Do Bi-directional optical flow" << std::endl;
+  std::cout << "kd_current corner size: " << kd_current.corners.size()
+            << " md matches size: " << md.matches.size() << std::endl;
 }
 
 /// Compute matches of current frame -> flows
