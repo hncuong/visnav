@@ -127,6 +127,9 @@ struct KeypointsData {
   /// collection of feature descriptors with same index as `corners` (indexed by
   /// FeatureId)
   std::vector<std::bitset<256>> corner_descriptors;
+
+  // Additional attr
+  std::map<FeatureId, FeatureId> transform_corner_map;
 };
 
 /// feature corners is a collection of { imageId => KeypointsData }
@@ -141,6 +144,9 @@ struct MatchData {
   std::vector<std::pair<FeatureId, FeatureId>> matches;
   /// collection of {featureId_i, featureId_j} pairs of inlier matches
   std::vector<std::pair<FeatureId, FeatureId>> inliers;
+
+  // Additional attr
+  std::map<FeatureId, FeatureId> corner0_transform_map, corner1_transform_map;
 
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };

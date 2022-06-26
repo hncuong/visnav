@@ -20,6 +20,7 @@
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
 #include <opencv2/video.hpp>
+#include <opencv2/features2d.hpp>
 
 #include <Eigen/Dense>
 #include <sophus/se3.hpp>
@@ -27,128 +28,376 @@
 
 namespace visnav {
 
-void matchOptFlow(const pangolin::ManagedImage<uint8_t>& currImgL,
-                  const pangolin::ManagedImage<uint8_t>& currImgR,
-                  cv::Mat prevImageL, cv::Mat prevImageR, KeypointsData prevKDL,
-                  // for now no references consider referencing
-                  KeypointsData& currKDL, double threshold) {
-  std::cout << "matchOptFlow" << std::endl;
-  cv::Mat imageL(currImgL.h, currImgL.w, CV_8U, currImgL.ptr);
-  cv::Mat imageR(currImgR.h, currImgR.w, CV_8U, currImgR.ptr);
-
-  std::vector<float> err;
-  std::vector<uchar> status;
-  currKDL.corners.clear();
-  cv::TermCriteria criteria = cv::TermCriteria(
-      (cv::TermCriteria::COUNT) + (cv::TermCriteria::EPS), 10, 0.003);
-  std::vector<cv::Point2f> prevPointsL, currPointsL, testL;
-
-  for (auto& c : prevKDL.corners) {
-    prevPointsL.push_back(cv::Point2f(c.x(), c.y()));
-  }
-
-  std::vector<cv::Mat> prevImageLPyramid, imageLPyramid;
-  cv::Size windowSize(5, 5);
-  const int& PYRAMID_LEVEL = 3;
-
-  std::cout << "Creating OpticalFlowPyramid" << std::endl;
-  cv::buildOpticalFlowPyramid(prevImageL, prevImageLPyramid, windowSize,
-                              PYRAMID_LEVEL);
-  cv::buildOpticalFlowPyramid(imageL, imageLPyramid, windowSize, PYRAMID_LEVEL);
-
-  std::cout << "prevImageLPyramid: " << prevImageLPyramid.size()
-            << " imageLPyramid: " << imageLPyramid.size() << std::endl;
-
-  std::cout << "Start Calculating Optical Flow" << std::endl;
-  cv::calcOpticalFlowPyrLK(prevImageLPyramid, imageLPyramid, prevPointsL,
-                           currPointsL, status, err, windowSize, 2, criteria);
-  cv::calcOpticalFlowPyrLK(imageLPyramid, prevImageLPyramid, currPointsL, testL,
-                           status, err, windowSize, 2, criteria);
-
-  std::cout << "currPointsL size: " << currPointsL.size() << std::endl;
-  std::cout << "testL size: " << testL.size() << std::endl;
-  std::cout << "End Calculating Optical Flow" << std::endl;
-
-  for (int i = 0; i < testL.size(); i++) {
-    Eigen::Vector2f diff(abs((testL[i] - prevPointsL[i]).x),
-                         abs((testL[i] - prevPointsL[i]).y));
-    Eigen::Vector2d tempy(round(currPointsL[i].x), round(currPointsL[i].y));
-
-    if ((diff.allFinite()) && (tempy.x() >= 0) && (tempy.y() >= 0) &&
-        ((tempy.y() < imageL.rows && tempy.x() < imageL.cols)) &&
-        (diff.norm() < threshold)) {
-      currKDL.corners.push_back(tempy);
-    }
-  }
-  std::cout << "NUM KEYPOINTS T-1 to T " << currKDL.corners.size() << " TOTAL "
-            << testL.size() << std::endl;
+// keep track of next available unique id for detected keypoints
+int last_keypoint_id = 0;
+// Finding the matches between projected_landmarks and detected keypoints in the
+// current frame
+void findMatchesLandmarksOpticalFlow(
+    const KeypointsData& kdl, const Landmarks& landmarks,
+    const Corners& feature_corners,
+    const std::vector<Eigen::Vector2d,
+                      Eigen::aligned_allocator<Eigen::Vector2d>>&
+        projected_points,
+    const std::vector<TrackId>& projected_track_ids, MatchData& md) {
+  md.matches.clear();
 }
 
-// TODO: Make this KD reference
-void matchLeftRightOptFlow(const pangolin::ManagedImage<uint8_t>& currImgL,
-                           const pangolin::ManagedImage<uint8_t>& currImgR,
-                           KeypointsData& currKDL, KeypointsData& currKDR,
-                           std::vector<std::pair<int, int>>& matches,
-                           double threshold) {
-  std::cout << "matchLeftRightOptFlow" << std::endl;
+void MatchOpticalFlow(const pangolin::ManagedImage<uint8_t>& imgl,
+                      const pangolin::ManagedImage<uint8_t>& imgr,
+                      KeypointsData& kdl, KeypointsData& kdr,
+                      std::vector<std::pair<FeatureId, FeatureId>>& matches,
+                      cv::TermCriteria criteria, cv::Size windowSize,
+                      int pyramid_lv, double threshold) {
   std::vector<cv::Point2f> currPointsL, currPointsR, currPointsTemp;
-  for (auto& c : currKDL.corners) {
+  for (auto& c : kdl.corners) {
     currPointsL.push_back(cv::Point2f(c.x(), c.y()));
   }
-
   std::vector<float> err;
   std::vector<uchar> status;
-  cv::TermCriteria criteria = cv::TermCriteria(
-      (cv::TermCriteria::COUNT) + (cv::TermCriteria::EPS), 10, 0.003);
-  cv::Mat imageL(currImgL.h, currImgL.w, CV_8U, currImgL.ptr);
-  cv::Mat imageR(currImgR.h, currImgR.w, CV_8U, currImgR.ptr);
-  currKDR.corners.clear();
-  matches.clear();
 
-  std::vector<cv::Mat> currImgLPyramid, currImgRPyramid;
-  cv::Size windowSize(5, 5);
-  const int& PYRAMID_LEVEL = 3;
+  cv::Mat imageL(imgl.h, imgl.w, CV_8U, imgl.ptr);
+  cv::Mat imageR(imgr.h, imgr.w, CV_8U, imgr.ptr);
+  kdr.corners.clear();
 
-  std::cout << "Creating OpticalFlow Pyramid" << std::endl;
-  cv::buildOpticalFlowPyramid(imageL, currImgLPyramid, windowSize,
-                              PYRAMID_LEVEL);
-  cv::buildOpticalFlowPyramid(imageR, currImgRPyramid, windowSize,
-                              PYRAMID_LEVEL);
+  std::vector<cv::Mat> imageL_pyramid, imageR_pyramid;
 
-  std::cout << "currImgLPyramid: " << currImgLPyramid.size()
-            << " currImgRPyramid: " << currImgRPyramid.size() << std::endl;
+  cv::buildOpticalFlowPyramid(imageL, imageL_pyramid, windowSize, pyramid_lv);
+  cv::buildOpticalFlowPyramid(imageR, imageR_pyramid, windowSize, pyramid_lv);
 
-  std::cout << "Do Optical Flow on Image Pyramid L -> R" << std::endl;
-  cv::calcOpticalFlowPyrLK(currImgLPyramid, currImgRPyramid, currPointsL,
-                           currPointsR, status, err, windowSize, 2, criteria);
-
-  std::cout << "Do Optical Flow on Image Pyramid R -> L" << std::endl;
-  cv::calcOpticalFlowPyrLK(currImgRPyramid, currImgLPyramid, currPointsR,
-                           currPointsTemp, status, err, windowSize, 2,
+  cv::calcOpticalFlowPyrLK(imageL_pyramid, imageR_pyramid, currPointsL,
+                           currPointsR, status, err, windowSize, pyramid_lv,
+                           criteria);
+  cv::calcOpticalFlowPyrLK(imageR_pyramid, imageL_pyramid, currPointsR,
+                           currPointsTemp, status, err, windowSize, pyramid_lv,
                            criteria);
 
-  std::cout << "currPointsL: " << currPointsL.size()
-            << " currPointsR: " << currPointsR.size()
-            << " currPointsTemp: " << currPointsTemp.size() << std::endl;
-
-  std::cout << "Optical Flow on Image Pyramid is done" << std::endl;
-
-  std::cout << "currPointsTemp: " << currPointsTemp.size() << std::endl;
-
   for (int i = 0; i < currPointsTemp.size(); i++) {
-    Eigen::Vector2f diff(abs((currPointsTemp[i] - currPointsL[i]).x),
-                         abs((currPointsTemp[i] - currPointsL[i]).y));
-    Eigen::Vector2d tempy(round(currPointsR[i].x), round(currPointsR[i].y));
+    Eigen::Vector2d diff(std::abs((currPointsTemp[i] - currPointsL[i]).x),
+                         std::abs((currPointsTemp[i] - currPointsL[i]).y));
+    Eigen::Vector2d right_keypoint(currPointsL[i].x, currPointsL[i].y);
 
-    currKDR.corners.push_back(tempy);
-    if ((diff.allFinite()) && (tempy.x() >= 0) && (tempy.y() >= 0) &&
-        ((tempy.y() < imageL.rows && tempy.x() < imageL.cols)) &&
-        (diff.norm() < threshold)) {
+    kdr.corners.push_back(right_keypoint);
+    if ((diff.allFinite()) && (diff.norm() < threshold)) {
       matches.push_back(std::make_pair(i, i));
     }
   }
+  std::cout << kdr.corners.size() << " " << matches.size() << std::endl;
+}
 
-  std::cout << "Matches after optical flow: " << matches.size() << std::endl;
+/* Detect keypoints in the image frame
+ * TODO: Use Grid-based keypoint detection
+ */
+void detectKeypoints_optical_flow(pangolin::ManagedImage<u_int8_t>& img,
+                                  KeypointsData& kd, double fast_t) {
+  cv::Mat img_cv(img.h, img.w, CV_8U, img.ptr);
+  std::vector<cv::KeyPoint> keypoints, selected_keypoints;
+  cv::FAST(img_cv, keypoints, fast_t);
+
+  for (size_t i = 0; i < keypoints.size(); i++) {
+    kd.corners.emplace_back(keypoints[i].pt.x, keypoints[i].pt.y);
+  }
+}
+
+void detectKeyPointsOpticalFlowSingleCam(
+    const pangolin::ManagedImage<uint8_t>& img_last,
+    const pangolin::ManagedImage<uint8_t>& img_current, KeypointsData& last_kd,
+    KeypointsData& current_kd, cv::TermCriteria criteria, cv::Size windowSize,
+    int pyramid_lv, double threshold) {
+  current_kd.corners.clear();
+  current_kd.corner_angles.clear();
+  current_kd.corner_descriptors.clear();
+
+  cv::Mat img_last_cv(img_last.h, img_last.w, CV_8U, img_last.ptr);
+  cv::Mat img_current_cv(img_current.h, img_current.w, CV_8U, img_current.ptr);
+
+  std::vector<cv::Point2f> img_last_points, img_current_points, img_tmp_points;
+  std::vector<cv::Mat> img_last_pyr, img_current_pyr;
+  std::vector<uchar> status;
+  std::vector<float> err;
+
+  // Build image pyramid corresponding to each cv image
+  cv::buildOpticalFlowPyramid(img_last_cv, img_last_pyr, windowSize,
+                              pyramid_lv);
+  cv::buildOpticalFlowPyramid(img_current_cv, img_current_pyr, windowSize,
+                              pyramid_lv);
+
+  std::vector<FeatureId> img_last_fids;
+
+  // Assign all keypoints & its corresponding FeatureId to img_last_points &
+  // img_last_fids
+  for (size_t i = 0; i < last_kd.corners.size(); i++) {
+    cv::Point2f last_kd_corner_cv(last_kd.corners.at(i)[0],
+                                  last_kd.corners.at(i)[1]);
+    img_last_points.push_back(last_kd_corner_cv);
+    img_last_fids.emplace_back(i);
+  }
+
+  // Optical flow to track points from img_last_pyr to img_current_pyr
+  cv::calcOpticalFlowPyrLK(img_last_pyr, img_current_pyr, img_last_points,
+                           img_current_points, status, err, windowSize,
+                           pyramid_lv, criteria);
+  std::vector<cv::Point2f> good_img_current_points;
+  std::vector<int> good_img_current_point_ids;
+  // Select only points which are visible in img_current_pyr
+  for (size_t i = 0; i < img_last_points.size(); i++) {
+    if (status[i] == 1) {
+      good_img_current_points.push_back(img_current_points[i]);
+      good_img_current_point_ids.push_back(i);
+    }
+  }
+
+  status.clear();
+  err.clear();
+  // Optical flow to track points from img_cuurent_pyr to img_last_pyr
+  cv::calcOpticalFlowPyrLK(img_current_pyr, img_last_pyr,
+                           good_img_current_points, img_tmp_points, status, err,
+                           windowSize, pyramid_lv, criteria);
+
+  for (size_t i = 0; i < good_img_current_points.size(); i++) {
+    if (status[i] == 1) {
+      Eigen::Vector2d origin(img_last_points[good_img_current_point_ids[i]].x,
+                             img_last_points[good_img_current_point_ids[i]].y);
+      Eigen::Vector2d backward_point(img_tmp_points[i].x, img_tmp_points[i].y);
+      double distance = (origin - backward_point).squaredNorm();
+      if (distance < threshold) {
+        Sophus::SE2d transformation;
+        Eigen::Matrix2d rotation = Eigen::Matrix2d::Identity();
+        transformation.setRotationMatrix(rotation);
+        Eigen::Vector2d current_point(
+            img_current_points[good_img_current_point_ids[i]].x,
+            img_current_points[good_img_current_point_ids[i]].y);
+
+        transformation.translation() = current_point;
+
+        current_kd.corners.push_back(current_point);
+      }
+    }
+  }
+}
+
+// void matchOpticalFlow(const pangolin::ManagedImage<uint8_t>& img_last,
+//                      const pangolin::ManagedImage<uint8_t>& img_current,
+//                      KeypointsData& current_kdl, KeypointsData& current_kdr,
+//                      std::vector<std::pair<int, int>>& matches,
+//                      cv::TermCriteria criteria, cv::Size windowSize,
+//                      int pyramid_lv, double threshold) {
+//  cv::Mat img_last_cv(img_last.h, img_last.w, CV_8U, img_last.ptr);
+//  cv::Mat img_current_cv(img_current.h, img_current.w, CV_8U,
+//  img_current.ptr);
+
+//  std::vector<cv::Point2f> img_last_points, img_current_points,
+//  img_tmp_points; std::vector<cv::Mat> img_last_pyr, img_current_pyr;
+//  std::vector<uchar> status;
+//  std::vector<float> err;
+
+//  // Build image pyramid corresponding to each cv image
+//  cv::buildOpticalFlowPyramid(img_last_cv, img_last_pyr, windowSize,
+//                              pyramid_lv);
+//  cv::buildOpticalFlowPyramid(img_current_cv, img_current_pyr, windowSize,
+//                              pyramid_lv);
+
+//  std::vector<FeatureId> img_last_fids;
+
+//  // Assign all keypoints & its corresponding FeatureId to img_last_points &
+//  // img_last_fids
+//  for (size_t i = 0; i < current_kdl.corners.size(); i++) {
+//    cv::Point2f last_kd_corner_cv(current_kdl.corners.at(i)[0],
+//                                  current_kdl.corners.at(i)[1]);
+//    img_last_points.push_back(last_kd_corner_cv);
+//    img_last_fids.emplace_back(i);
+//  }
+
+//  // Optical flow to track points from img_last_pyr to img_current_pyr
+//  cv::calcOpticalFlowPyrLK(img_last_pyr, img_current_pyr, img_last_points,
+//                           img_current_points, status, err, windowSize,
+//                           pyramid_lv, criteria);
+//  std::vector<cv::Point2f> good_img_current_points;
+//  std::vector<int> good_img_current_point_ids;
+//  // Select only points which are visible in img_current_pyr
+//  for (size_t i = 0; i < img_last_points.size(); i++) {
+//    if (status[i] == 1) {
+//      good_img_current_points.push_back(img_current_points[i]);
+//      good_img_current_point_ids.push_back(i);
+//    }
+//  }
+
+//  status.clear();
+//  err.clear();
+//  // Optical flow to track points from img_cuurent_pyr to img_last_pyr
+//  cv::calcOpticalFlowPyrLK(img_current_pyr, img_last_pyr,
+//                           good_img_current_points, img_tmp_points, status,
+//                           err, windowSize, pyramid_lv, criteria);
+
+//  for (size_t i = 0; i < good_img_current_points.size(); i++) {
+//    if (status[i] == 1) {
+//      Eigen::Vector2d origin(img_last_points[good_img_current_point_ids[i]].x,
+//                             img_last_points[good_img_current_point_ids[i]].y);
+//      Eigen::Vector2d backward_point(img_tmp_points[i].x,
+//      img_tmp_points[i].y); double distance = (origin -
+//      backward_point).squaredNorm();
+
+//      Eigen::Vector2d right_point(good_img_current_points[i].x,
+//                                  good_img_current_points[i].y);
+
+//      current_kdr.corners.push_back(right_point);
+//      if (distance < threshold) {
+//        matches.push_back(std::make_pair(i, i));
+//      }
+//    }
+//  }
+//}
+
+void findInlierEssential_optical_flow(
+    std::vector<std::map<FeatureId, Sophus::SE2d>> flows,
+    const std::shared_ptr<AbstractCamera<double>>& cam1,
+    const std::shared_ptr<AbstractCamera<double>>& cam2, Eigen::Matrix3d& E,
+    double epipolar_error_threshold) {
+  std::vector<int> keypoints_to_filter;
+
+  for (auto& left_image_flow : flows.at(1)) {
+    // keypoint is detected in both left and right images
+    FeatureId left_image_fid = left_image_flow.first;
+    if (flows.at(0).find(left_image_fid) != flows.at(0).end()) {
+      Eigen::Vector2d p_l =
+          flows.at(0).find(left_image_fid)->second.translation();
+      Eigen::Vector2d p_r = left_image_flow.second.translation();
+
+      Eigen::Vector3d proj_l = cam1->unproject(p_l);
+      Eigen::Vector3d proj_r = cam2->unproject(p_r);
+
+      // check epipolar constraint
+      if (abs(proj_l.transpose() * E * proj_r) > epipolar_error_threshold) {
+        keypoints_to_filter.emplace_back(left_image_fid);
+      }
+    }
+  }
+
+  // remove keypoints from right camera if epipolar constraint is failed
+  for (FeatureId removed_fid : keypoints_to_filter) {
+    flows.at(1).erase(removed_fid);
+  }
+}
+
+void match_optical_flow(const pangolin::ManagedImage<uint8_t>& img_last,
+                        const pangolin::ManagedImage<uint8_t>& img_current,
+                        cv::TermCriteria criteria, cv::Size windowSize,
+                        int pyramid_lv, double threshold,
+                        std::map<int, Sophus::SE2d>& flow_img_last,
+                        std::map<int, Sophus::SE2d>& flow_img_current) {
+  if (flow_img_last.size() == 0) return;
+
+  cv::Mat img_last_cv(img_last.h, img_last.w, CV_8U, img_last.ptr);
+  cv::Mat img_current_cv(img_current.h, img_current.w, CV_8U, img_current.ptr);
+
+  std::vector<cv::Point2f> img_last_points, img_current_points, img_tmp_points;
+  std::vector<cv::Mat> img_last_pyr, img_current_pyr;
+  std::vector<uchar> status;
+  std::vector<float> err;
+
+  // Build image pyramid corresponding to each cv image
+  cv::buildOpticalFlowPyramid(img_last_cv, img_last_pyr, windowSize,
+                              pyramid_lv);
+  cv::buildOpticalFlowPyramid(img_current_cv, img_current_pyr, windowSize,
+                              pyramid_lv);
+
+  std::vector<FeatureId> img_last_fids;
+
+  // Assign all keypoints & its corresponding FeatureId to img_last_points &
+  // img_last_fids
+  for (auto last_flow : flow_img_last) {
+    Eigen::Vector2d p = last_flow.second.translation();
+    cv::Point2f p_cv(p[0], p[1]);
+    img_last_points.emplace_back(p_cv);
+    img_last_fids.emplace_back(last_flow.first);
+  }
+
+  // Optical flow to track points from img_last_pyr to img_current_pyr
+  cv::calcOpticalFlowPyrLK(img_last_pyr, img_current_pyr, img_last_points,
+                           img_current_points, status, err, windowSize,
+                           pyramid_lv, criteria);
+  std::vector<cv::Point2f> good_img_current_points;
+  std::vector<int> good_img_current_point_ids;
+  // Select only points which are visible in img_current_pyr
+  for (size_t i = 0; i < img_last_points.size(); i++) {
+    if (status[i] == 1) {
+      good_img_current_points.push_back(img_current_points[i]);
+      good_img_current_point_ids.push_back(i);
+    }
+  }
+
+  status.clear();
+  err.clear();
+  // Optical flow to track points from img_cuurent_pyr to img_last_pyr
+  cv::calcOpticalFlowPyrLK(img_current_pyr, img_last_pyr,
+                           good_img_current_points, img_tmp_points, status, err,
+                           windowSize, pyramid_lv, criteria);
+
+  for (size_t i = 0; i < good_img_current_points.size(); i++) {
+    if (status[i] == 1) {
+      Eigen::Vector2d origin(img_last_points[good_img_current_point_ids[i]].x,
+                             img_last_points[good_img_current_point_ids[i]].y);
+      Eigen::Vector2d backward_point(img_tmp_points[i].x, img_tmp_points[i].y);
+      double distance = (origin - backward_point).squaredNorm();
+      if (distance < threshold) {
+        Sophus::SE2d transformation;
+        Eigen::Matrix2d rotation = Eigen::Matrix2d::Identity();
+        transformation.setRotationMatrix(rotation);
+        Eigen::Vector2d current_point(
+            img_current_points[good_img_current_point_ids[i]].x,
+            img_current_points[good_img_current_point_ids[i]].y);
+
+        transformation.translation() = current_point;
+
+        flow_img_current[img_last_fids[good_img_current_point_ids[i]]] =
+            transformation;
+      }
+    }
+  }
+}
+
+void add_points(std::vector<std::map<int, Sophus::SE2d>>& transforms,
+                pangolin::ManagedImage<uint8_t>& left_image,
+                pangolin::ManagedImage<uint8_t>& right_image, int fast_t,
+                cv::TermCriteria criteria, cv::Size windowSize,
+                bool track_new_points_to_right, int pyramid_level,
+                double distance_threshold) {
+  cv::Mat left_image_cv(left_image.h, left_image.w, CV_8U, left_image.ptr);
+  cv::Mat right_image_cv(right_image.h, right_image.w, CV_8U, right_image.ptr);
+  std::vector<Eigen::Vector2d> points_l;
+
+  // keep tracked points for left image
+  for (const auto& kv : transforms.at(0)) {
+    points_l.emplace_back(kv.second.translation());
+  }
+
+  KeypointsData new_points;
+
+  detectKeypoints_optical_flow(left_image, new_points, fast_t);
+
+  std::map<FeatureId, Sophus::SE2d> new_poses_l, new_poses_r;
+
+  for (size_t i = 0; i < new_points.corners.size(); ++i) {
+    // it is newly found, there is no extra transformation than its position
+    Eigen::Matrix2d rot = Eigen::Matrix2d::Identity();
+
+    transforms.at(0)[last_keypoint_id].setRotationMatrix(rot);
+    transforms.at(0)[last_keypoint_id].translation() = new_points.corners[i];
+
+    new_poses_l[last_keypoint_id].setRotationMatrix(rot);
+    new_poses_l[last_keypoint_id].translation() = new_points.corners[i];
+
+    last_keypoint_id++;
+  }
+
+  if (new_poses_l.size() > 0 && track_new_points_to_right) {
+    // track points from left camera to right camera
+    match_optical_flow(left_image, right_image, criteria, windowSize,
+                       pyramid_level, distance_threshold, new_poses_l,
+                       new_poses_r);
+    for (const auto& kv : new_poses_r) {
+      transforms.at(1).emplace(kv);
+    }
+  }
 }
 
 // Add new keypoints to current exist keypoints in a frame
@@ -241,29 +490,109 @@ void find_matches_landmarks_with_otpical_flow(const FrameCamId& fcid_last,
   }
 }
 
-void find_matches_landmarks_with_otpical_flow(
-    const pangolin::ManagedImage<uint8_t>& img_last,
-    const pangolin::ManagedImage<uint8_t>& img_current,
-    const KeypointsData& kd_last, KeypointsData& current_frame_kd,
-    const Landmarks& landmarks, const Corners& feature_corners,
-    double reproject_threshold, LandmarkMatchData& md) {}
+void find_matches_landmarks_optical_flow(
+    const KeypointsData& kdl, const Landmarks& landmarks,
+    const Corners& feature_corners,
+    const std::vector<Eigen::Vector2d,
+                      Eigen::aligned_allocator<Eigen::Vector2d>>&
+        projected_points,
+    const std::vector<TrackId>& projected_track_ids,
+    const double match_max_dist_2d, const int feature_match_threshold,
+    const double feature_match_dist_2_best, LandmarkMatchData& md) {
+  md.matches.clear();
 
-//    landmarks => KeypointsData kd
-//        => optical_flows => current_frame_kd, MatchData
-//    optical_flows()
+  // TODO SHEET 5: Find the matches between projected landmarks and detected
+  // keypoints in the current frame. For every detected keypoint search for
+  // matches inside a circle with radius match_max_dist_2d around the point
+  // location. For every landmark the distance is the minimal distance between
+  // the descriptor of the current point and descriptors of all observations of
+  // the landmarks. The feature_match_threshold and feature_match_dist_2_best
+  // should be used to filter outliers the same way as in exercise 3. You should
+  // fill md.matches with <featureId,trackId> pairs for the successful matches
+  // that pass all tests.
+  //  UNUSED(kdl);
+  //  UNUSED(landmarks);
+  //  UNUSED(feature_corners);
+  //  UNUSED(projected_points);
+  //  UNUSED(projected_track_ids);
+  //  UNUSED(match_max_dist_2d);
+  //  UNUSED(feature_match_threshold);
+  //  UNUSED(feature_match_dist_2_best);
+
+  /*
+   * Do matching similarly to brute force matching of ORB Features in Exercise 3
+   */
+  for (size_t kp_idx = 0; kp_idx < kdl.corners.size(); kp_idx++) {
+    int min_distance = 257;
+    int second_min_distance = 257;
+    int best_match = -1;
+    Eigen::Vector2d cur_corner = kdl.corners.at(kp_idx);
+    std::bitset<256> cur_corner_descriptor = kdl.corner_descriptors.at(kp_idx);
+
+    for (size_t pt_idx = 0; pt_idx < projected_points.size(); pt_idx++) {
+      Eigen::Vector2d projected_point = projected_points.at(pt_idx);
+      // Check if detected corners is in a circle with radius match_max_dist_2d
+      if ((cur_corner - projected_point).squaredNorm() <=
+          match_max_dist_2d * match_max_dist_2d) {
+        TrackId pt_track_id = projected_track_ids.at(pt_idx);
+        Landmark landmark = landmarks.at(pt_track_id);
+        int min_dist_landmark = 257;
+        /*
+         * Iterate through landmark.obs --> Inlier observations in the current
+        // map.
+         * FeatureTrack --> Feature tracks are collections of {ImageId =>
+        FeatureId}.
+         * - I.e. a collection of all images that observed this feature and the
+        corresponding feature index in that image.
+        */
+        for (std::pair<FrameCamId, FeatureId> inlier_obs : landmark.obs) {
+          FrameCamId fcid = inlier_obs.first;
+          FrameId fid = inlier_obs.second;
+          std::bitset<256> feature_corner_descriptor =
+              feature_corners.at(fcid).corner_descriptors.at(fid);
+          int hamming_distance =
+              (cur_corner_descriptor ^ feature_corner_descriptor).count();
+          min_dist_landmark = std::min(min_dist_landmark, hamming_distance);
+        }
+
+        if (min_dist_landmark < min_distance) {
+          second_min_distance = min_distance;
+          min_distance = min_dist_landmark;
+          best_match = projected_track_ids.at(pt_idx);
+        } else if (min_dist_landmark < second_min_distance) {
+          second_min_distance = min_dist_landmark;
+        }
+      }
+    }
+
+    /*
+     * Discard matches in 2 scenarios
+     * 1) Discard matches when the min_distance is greater than
+    feature_match_threshold
+     * 2) Discard matches if the distance to the second last best match is
+    smaller than the smallest distance multiplied by feature_match_dist_2_best
+    */
+    if ((min_distance >= feature_match_threshold) ||
+        (second_min_distance < feature_match_dist_2_best * min_distance)) {
+      continue;
+    }
+    // Appending matches into LandmarkMatchData storing image to landmark
+    // matches
+    md.matches.push_back(std::make_pair(kp_idx, best_match));
+  }
+}  // namespace visnav
 
 // Remove the keypoints that die out in the
 
 void localize_camera_optical_flow(
-    const Sophus::SE3d& current_pose,
     const std::shared_ptr<AbstractCamera<double>>& cam,
-    const KeypointsData& kdl, const Landmarks& landmarks,
+    std::map<FeatureId, Sophus::SE2d>& flows_per_frame,
+    const Landmarks& landmarks,
     const double reprojection_error_pnp_inlier_threshold_pixel,
-    LandmarkMatchData& md) {
-  md.inliers.clear();
+    LandmarkMatchData& md, Sophus::SE3d& T_w_c, std::vector<int>& inliers) {
+  inliers.clear();
 
-  // default to previous pose if not enough inliers
-  md.T_w_c = current_pose;
+  T_w_c = Sophus::SE3d();
 
   if (md.matches.size() < 4) {
     return;
@@ -271,13 +600,11 @@ void localize_camera_optical_flow(
 
   opengv::bearingVectors_t bearing_vectors;
   opengv::points_t points_t;
-  size_t numberPoints = md.matches.size();
-  // Reserve the size of bearing vectors and points = # matches
-  bearing_vectors.reserve(numberPoints);
-  points_t.reserve(numberPoints);
 
-  // Affine2f:  Represents an homogeneous transformation in a 2 dimensional
-  // space
+  //  size_t numberPoints = md.matches.size();
+  //  // Reserve the size of bearing vectors and points = # matches
+  //  bearing_vectors.reserve(numberPoints);
+  //  points_t.reserve(numberPoints);
 
   /*
    * - Adding unprojected points from the camera into bearing_vectors
@@ -285,23 +612,45 @@ void localize_camera_optical_flow(
    * - pass bearing_vectors and points into CentralAbsoluteAdapter
    */
 
-  for (auto& kv : md.matches) {
-    FeatureId feature_id = kv.first;
-    const auto& trackId = kv.second;
-    points_t.push_back(landmarks.at(trackId).p);
-
-    Eigen::Vector3d unprojected_point =
-        cam->unproject(kdl.corners.at(feature_id));
-    bearing_vectors.push_back(unprojected_point);
+  // Find keypoints that belong to landmarks -> Fill with correspondences in
+  // matches
+  for (auto l : landmarks) {
+    std::cout << "Landmark trackId: " << l.first << std::endl;
   }
+
+  std::cout << "Loop through each item in flows_per_item" << std::endl;
+
+  for (auto& f : flows_per_frame) {
+    std::cout << "flows_per_frame item:  (" << f.first << ", "
+              << f.second.translation() << ")" << std::endl;
+
+    // In case that we found the landmark with specific FeatureId
+    if (landmarks.find(f.first) != landmarks.end()) {
+      // 3D point in world frame
+      points_t.emplace_back(landmarks.at(f.first).p);
+
+      // 2D -> 3D point in cam frame
+      const auto& p_2c = f.second.translation();
+      bearing_vectors.emplace_back(cam->unproject(p_2c));
+
+      // populate md to use later in add_new_landmarks.
+      // `inliers` will contain indices from md.matches
+      md.matches.emplace_back(std::make_pair(f.first, f.first));
+    }
+  }
+
+  std::cout << "md.matches size: " << md.matches.size() << std::endl;
+
+  std::cout << "points_t size: " << points_t.size()
+            << " bearing_vectors size: " << bearing_vectors.size() << std::endl;
 
   if (points_t.size() == 0 || bearing_vectors.size() == 0) return;
 
   /*
    * Use CentralAbsoluteAdapter & corresponding RANSAC implementation
    * AbsolutePoseSacProblem
-   * - AbsolutePoseSacProblem that uses a minimal variant of PnP taking exactly
-   * 3 points: KNEIP
+   * - AbsolutePoseSacProblem that uses a minimal variant of PnP taking
+   * exactly 3 points: KNEIP
    */
   opengv::absolute_pose::CentralAbsoluteAdapter adapter(bearing_vectors,
                                                         points_t);
@@ -338,56 +687,62 @@ void localize_camera_optical_flow(
     opengv::transformation_t optimized =
         opengv::absolute_pose::optimize_nonlinear(adapter, ransac.inliers_);
     ransac.sac_model_->selectWithinDistance(optimized, ransac.threshold_,
-                                            ransac.inliers_);
+                                            inliers);
 
-    // Return the new transformation matrix in world coordinates (refined pose)
+    // Return the new transformation matrix in world coordinates (refined
+    // pose)
     Eigen::Matrix4d res;
     res.block<3, 3>(0, 0) = optimized.block<3, 3>(0, 0);
     res.block<3, 1>(0, 3) = optimized.block<3, 1>(0, 3);
     res.block<1, 4>(3, 0) = Eigen::Vector4d(0, 0, 0, 1);
-    md.T_w_c = Sophus::SE3d(res);
 
-    // Return set of track ids for all inliers
-    for (auto i : ransac.inliers_) {
-      md.inliers.push_back(md.matches[i]);
-    }
+    T_w_c = Sophus::SE3d(res);
   }
 }
 
 void add_new_landmarks_optical_flow(
     const FrameCamId fcidl, const FrameCamId fcidr, const KeypointsData& kdl,
     const KeypointsData& kdr, const Calibration& calib_cam,
+    Sophus::SE3d& T_w_c0, Landmarks& landmarks, std::vector<int>& inliers,
     const MatchData& md_stereo, const LandmarkMatchData& md,
-    Landmarks& landmarks, TrackId& next_landmark_id) {
-  assert(fcidl.cam_id == 0);
-  assert(fcidr.cam_id == 1);
-  // Pose of camera 1 (right) w.r.t camera 0 (left)
+    TrackId& next_landmark_id) {
+  // input should be stereo pair
+  assert(fcidl.cam_id == 0);  // Left camera should have camera_id = 0
+  assert(fcidr.cam_id == 1);  // Right camera should have camera_id = 1
   const Sophus::SE3d T_0_1 = calib_cam.T_i_c[0].inverse() * calib_cam.T_i_c[1];
 
   const Eigen::Vector3d t_0_1 = T_0_1.translation();
   const Eigen::Matrix3d R_0_1 = T_0_1.rotationMatrix();
 
-  /*
-   * Add new landmarks and observations
-   */
+  // TODO SHEET 5: Add new landmarks and observations. Here md_stereo contains
+  // stereo matches for the current frame and md contains feature to landmark
+  // matches for the left camera (camera 0). For all inlier feature to landmark
+  // matches add the observations to the existing landmarks. If the left
+  // camera's feature appears also in md_stereo.inliers, then add both
+  // observations. For all inlier stereo observations that were not added to the
+  // existing landmarks, triangulate and add new landmarks. Here
+  // next_landmark_id is a running index of the landmarks, so after adding a new
+  // landmark you should always increase next_landmark_id by 1.
 
   std::set<std::pair<FeatureId, FeatureId>> existing_landmark;
-  for (auto& landmark_inlier : md.inliers) {
+
+  for (auto landmark_inlier : md.inliers) {
     FeatureId feature_id = landmark_inlier.first;
     TrackId track_id = landmark_inlier.second;
-    // Add new landmark into landmarks here
+    // Add new Landmarks
     std::pair<FrameCamId, FeatureId> landmark_pair =
         std::make_pair(fcidl, feature_id);
 
     landmarks.at(track_id).obs.insert(landmark_pair);
-
-    // Check if the left point is in md_stereo.inliers then add both
-    // observations
-    for (auto& md_stereo_inlier : md_stereo.inliers) {
-      FeatureId stereo_feature_id = md_stereo_inlier.first;
-      TrackId stereo_track_id = md_stereo_inlier.second;
-      if (feature_id == stereo_feature_id) {
-        existing_landmark.insert(md_stereo_inlier);
+    /*
+     * Check if keypoints also appears in md_stereo.inliers
+     */
+    for (auto stereo_inlier : md_stereo.inliers) {
+      if (feature_id == stereo_inlier.first) {
+        // Add keypoints that also appears in md_stereo.inliers into the
+        // existing_landmark to check the existence of the keypoint
+        existing_landmark.insert(stereo_inlier);
+        TrackId stereo_track_id = stereo_inlier.second;
         landmark_pair = std::make_pair(fcidr, stereo_track_id);
         landmarks.at(track_id).obs.insert(landmark_pair);
       }
@@ -401,15 +756,21 @@ void add_new_landmarks_optical_flow(
    * - Add new landmarks
    *
    */
+  opengv::bearingVectors_t bearing_vec_1;
+  opengv::bearingVectors_t bearing_vec_2;
 
-  opengv::bearingVectors_t bearing_vectors_0, bearing_vectors_1;
-
-  for (auto& md_stereo_inlier : md_stereo.inliers) {
-    // TODO: Adding new points into bearing_vectors
+  // i = second image coordinate system j = first image coordinate
+  // MatchData.inlier: collection of {featureId_i, featureId_j} pairs of all
+  // matches
+  for (auto stereo_inlier : md_stereo.inliers) {
+    bearing_vec_1.push_back(calib_cam.intrinsics[fcidl.cam_id]->unproject(
+        kdl.corners.at(stereo_inlier.first)));
+    bearing_vec_2.push_back(calib_cam.intrinsics[fcidr.cam_id]->unproject(
+        kdr.corners.at(stereo_inlier.second)));
   }
 
   opengv::relative_pose::CentralRelativeAdapter adapter(
-      bearing_vectors_0, bearing_vectors_1, t_0_1, R_0_1);
+      bearing_vec_1, bearing_vec_2, t_0_1, R_0_1);
   int idx = 0;
 
   for (auto stereo_inlier : md_stereo.inliers) {
