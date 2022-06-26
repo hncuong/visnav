@@ -38,6 +38,8 @@ void add_keypoints(const pangolin::ManagedImage<uint8_t>& img_raw,
                    KeypointsData& kd, int num_features) {
   KeypointsData new_kd;
   detectKeypoints(img_raw, new_kd, num_features);
+  std::cout << "Found " << new_kd.corners.size() << "- Expected "
+            << num_features << "\n";
 
   // TODO Update to check overlap keypoints later
   for (const auto& kp : new_kd.corners) {
@@ -103,8 +105,10 @@ void find_matches_landmarks_with_otpical_flow(const FrameCamId& fcid_last,
   // For each flows, find featureId of last frame
   // Map to featureId in new frame with md_last
   // Map featureId last -> current frame
-  std::unordered_map<FeatureId, FeatureId> matches_map(md_last.matches.begin(),
-                                                       md_last.matches.end());
+  std::map<FeatureId, FeatureId> matches_map;
+  for (const auto& kv : md_last.matches) {
+    matches_map.insert(std::make_pair(kv.first, kv.second));
+  }
 
   std::vector<TrackId> flow_to_discard;
   for (auto& kv_lm : flows) {
@@ -138,10 +142,9 @@ void find_matches_landmarks_with_otpical_flow(const FrameCamId& fcid_last,
   }
 
   // Now discard dieout flows
-  // TODO DON'T discard for now
-  //  for (const auto& trackId : flow_to_discard) {
-  //    flows.erase(trackId);
-  //  }
+  for (const auto& trackId : flow_to_discard) {
+    flows.at(trackId).alive = false;
+  }
 }
 
 void localize_camera_optical_flow(
@@ -159,49 +162,33 @@ void localize_camera_optical_flow(
     return;
   }
 
-  opengv::bearingVectors_t bearing_vectors;
-  opengv::points_t points_t;
+  // Create bearingVectors and points
+  // bearingVectors is Camera Frame and points is World Frame
   size_t numberPoints = md.matches.size();
-  // Reserve the size of bearing vectors and points = # matches
-  bearing_vectors.reserve(numberPoints);
-  points_t.reserve(numberPoints);
+  opengv::bearingVectors_t bearingVectors;
+  opengv::points_t points;
+  bearingVectors.reserve(numberPoints);
+  points.reserve(numberPoints);
 
-  // Affine2f:  Represents an homogeneous transformation in a 2 dimensional
-  // space
-
-  /*
-   * - Adding unprojected points from the camera into bearing_vectors
-   * - Adding flows at specific tracks into points
-   * - pass bearing_vectors and points into CentralAbsoluteAdapter
-   */
-
-  for (auto& kv : md.matches) {
-    FeatureId feature_id = kv.first;
+  // Fill with correspondences in matches
+  for (const auto& kv : md.matches) {
+    // 3D point in world frame
     const auto& trackId = kv.second;
-    points_t.push_back(flows.at(trackId).p);
+    points.emplace_back(flows.at(trackId).p);
 
-    Eigen::Vector3d unprojected_point =
-        cam->unproject(kdl.corners.at(feature_id));
-    bearing_vectors.push_back(unprojected_point);
+    // 2D -> 3D point in cam frame
+    const auto& feature_id = kv.first;
+    const auto& p_2c = kdl.corners.at(feature_id);
+    bearingVectors.emplace_back(cam->unproject(p_2c));
   }
 
-  if (points_t.size() == 0 || bearing_vectors.size() == 0) return;
-
-  /*
-   * Use CentralAbsoluteAdapter & corresponding RANSAC implementation
-   * AbsolutePoseSacProblem
-   * - AbsolutePoseSacProblem that uses a minimal variant of PnP taking exactly
-   * 3 points: KNEIP
-   */
-  opengv::absolute_pose::CentralAbsoluteAdapter adapter(bearing_vectors,
-                                                        points_t);
-
+  //
+  // RANSAC
+  //
+  opengv::absolute_pose::CentralAbsoluteAdapter adapter(bearingVectors, points);
   opengv::sac::Ransac<
       opengv::sac_problems::absolute_pose::AbsolutePoseSacProblem>
       ransac;
-  // create an AbsolutePoseSacProblem
-  // (algorithm is selectable: KNEIP, GAO, or EPNP)
-
   std::shared_ptr<opengv::sac_problems::absolute_pose::AbsolutePoseSacProblem>
       absposeproblem_ptr(
           new opengv::sac_problems::absolute_pose::AbsolutePoseSacProblem(
@@ -209,38 +196,49 @@ void localize_camera_optical_flow(
                            AbsolutePoseSacProblem::KNEIP));
 
   ransac.sac_model_ = absposeproblem_ptr;
+  const double default_focal_length = 500.;
+  const double ransac_thresh =
+      1.0 - cos(atan(reprojection_error_pnp_inlier_threshold_pixel /
+                     default_focal_length));
+  ransac.threshold_ = ransac_thresh;
 
-  /*
-   * Specifying reprojection error threshold
-   * - Focal length of 500.0
-   * - Reprojection error in pixels -->
-   * reprojection_error_pnp_inlier_threshold_pixel
-   */
+  //  ransac.max_iterations_ = maxIterations;
+  ransac.computeModel();
+  opengv::transformation_t best_transformation = ransac.model_coefficients_;
 
-  ransac.threshold_ =
-      1.0 - cos(atan(reprojection_error_pnp_inlier_threshold_pixel / 500.0));
-  if (ransac.computeModel()) {
-    // Set rotation block in Adapter
-    adapter.setR(ransac.model_coefficients_.block<3, 3>(0, 0));
-    // Set translation block in Adapter
-    adapter.sett(ransac.model_coefficients_.block<3, 1>(0, 3));
-    // Return the result from RANSAC
-    opengv::transformation_t optimized =
-        opengv::absolute_pose::optimize_nonlinear(adapter, ransac.inliers_);
-    ransac.sac_model_->selectWithinDistance(optimized, ransac.threshold_,
-                                            ransac.inliers_);
+  // Get the inliers and refine pose to T_w_c
+  std::vector<int> inliers = ransac.inliers_;
+  opengv::bearingVectors_t bearingVectors_inliers;
+  opengv::points_t points_inliers;
+  bearingVectors_inliers.reserve(inliers.size());
+  points_inliers.reserve(inliers.size());
 
-    // Return the new transformation matrix in world coordinates (refined pose)
-    Eigen::Matrix4d res;
-    res.block<3, 3>(0, 0) = optimized.block<3, 3>(0, 0);
-    res.block<3, 1>(0, 3) = optimized.block<3, 1>(0, 3);
-    res.block<1, 4>(3, 0) = Eigen::Vector4d(0, 0, 0, 1);
-    md.T_w_c = Sophus::SE3d(res);
+  // Fill with correspondences in matches inliers
+  for (const auto& i : inliers) {
+    const auto& kv = md.matches.at(i);
 
-    // Return set of track ids for all inliers
-    for (auto i : ransac.inliers_) {
-      md.inliers.push_back(md.matches[i]);
-    }
+    bearingVectors_inliers.push_back(cam->unproject(kdl.corners.at(kv.first)));
+    points_inliers.emplace_back(flows.at(kv.second).p);
+  }
+
+  opengv::absolute_pose::CentralAbsoluteAdapter adapter_inliers(
+      bearingVectors_inliers, points_inliers);
+  adapter_inliers.sett(best_transformation.block<3, 1>(0, 3));
+  adapter_inliers.setR(best_transformation.block<3, 3>(0, 0));
+  opengv::transformation_t refined_transformation =
+      opengv::absolute_pose::optimize_nonlinear(adapter_inliers);
+
+  md.T_w_c = Sophus::SE3d(refined_transformation.block<3, 3>(0, 0),
+                          refined_transformation.block<3, 1>(0, 3));
+
+  // Refine inliers and add to inlier_track_ids
+  // Re-estimate inlier set
+  ransac.sac_model_->selectWithinDistance(refined_transformation, ransac_thresh,
+                                          inliers);
+
+  md.inliers.reserve(inliers.size());
+  for (auto i : inliers) {
+    md.inliers.emplace_back(md.matches.at(i));
   }
 }
 
@@ -263,8 +261,13 @@ void add_new_landmarks_optical_flow(
   const auto& T_w_c = md.T_w_c;
   const auto& stereo_inliers = md_stereo.inliers;  // FeatureId, FeatureId
   const auto& landmark_inliers = md.inliers;       // FeatureId, TrackId
-  std::unordered_map<FeatureId, FeatureId> stereo_inliers_map(
-      stereo_inliers.begin(), stereo_inliers.end());
+
+  // Create inlier map for quick search
+  std::unordered_map<FeatureId, FeatureId> stereo_inliers_map;
+  for (const auto& kv : stereo_inliers) {
+    stereo_inliers_map.emplace(kv.first, kv.second);
+  }
+
   //  const FeatureId LANDMARK_EXIST = -2;
   std::set<FeatureId> featureExistInflows;
 
@@ -318,6 +321,7 @@ void add_new_landmarks_optical_flow(
 
       Flow flow;
       flow.p = p;
+      flow.alive = true;
 
       flow.obs.emplace(fcidl, featureId_lr.first);
       flow.obs.emplace(fcidr, featureId_lr.second);
