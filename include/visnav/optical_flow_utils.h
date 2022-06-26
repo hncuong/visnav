@@ -77,7 +77,7 @@ void optical_flows(const pangolin::ManagedImage<uint8_t>& img_last,
       (cv::TermCriteria::COUNT) + (cv::TermCriteria::EPS), 10, 0.03);
   cv::Size windowSize(15, 15);
   int pyramid_level = 2;
-  double distance_threshold = 10.0;
+  double distance_threshold = 1.0;
 
   std::vector<cv::Mat> old_frame_pyr, frame_pyr;
 
