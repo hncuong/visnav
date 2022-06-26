@@ -36,6 +36,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <iostream>
 #include <sstream>
 #include <thread>
+#include <random>
 
 #include <sophus/se3.hpp>
 
@@ -47,6 +48,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <pangolin/image/image_io.h>
 #include <pangolin/image/typed_image.h>
 #include <pangolin/pangolin.h>
+
+#include <opencv2/core.hpp>
 
 #include <CLI/CLI.hpp>
 
@@ -147,7 +150,9 @@ pangolin::ManagedImage<uint8_t> imgl_last;
 /// Flows
 Flows flows;
 /// Flows to show
-std::set<TrackId> flows_to_show;
+std::unordered_map<TrackId, Eigen::Vector3f> flows_to_show;
+// For generating random colors
+cv::RNG rng;
 
 ///////////////////////////////////////////////////////////////////////////////
 /// GUI parameters
@@ -178,9 +183,12 @@ pangolin::Var<bool> show_epipolar("hidden.show_epipolar", false, true);
 pangolin::Var<bool> show_cameras3d("hidden.show_cameras", true, true);
 pangolin::Var<bool> show_points3d("hidden.show_points", true, true);
 pangolin::Var<bool> show_old_points3d("hidden.show_old_points3d", true, true);
-/// For showing Optical flows
+
+/// For Optical flows
 pangolin::Var<bool> show_flows("ui.show_flows", true, true);
-pangolin::Var<int> num_flows_to_draw("hidden.num_features", 10, 1, 100);
+pangolin::Var<int> num_flows_to_draw("hidden.num_flows_to_draw", 10, 1, 100);
+pangolin::Var<int> num_bin_x("hidden.num_bin_x", 3, 1, 20);
+pangolin::Var<int> num_bin_y("hidden.num_bin_y", 3, 1, 20);
 
 //////////////////////////////////////////////
 /// Feature extraction and matching options
@@ -437,33 +445,101 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
     glColor3f(0.0, 0.0, 1.0);  // blue
 
     size_t num_flows = flows.size();
-    // TODO Choose conistent flows
-    // Fill it until it reach the numbers needed
-    if (flows_to_show.size() < num_flows_to_draw) {
-      size_t num_flows_to_add = num_flows_to_draw - flows_to_show.size();
-      size_t step = num_flows / num_flows_to_add + 1;
-      size_t flow_cnt = 0;
-      size_t flow_draw_cnt = 0;
+    /// Check alive flows and draw circle around it
+    std::vector<TrackId> aliveFlows;
+    for (const auto& kv : flows) {
+      if (kv.second.alive) {
+        aliveFlows.emplace_back(kv.first);
 
-      for (const auto& kv_fl : flows) {
-        // Only select some flows
-        if (flow_cnt % step == 0) {
-          const auto& trackId = kv_fl.first;
-          flows_to_show.emplace(trackId);
-          flow_draw_cnt++;
+        // Draw circle
+        if (kv.second.flow.count(fcid) > 0 && feature_corners.count(fcid) > 0) {
+          const auto& featureId = kv.second.flow.at(fcid);
+          const KeypointsData& cr = feature_corners.at(fcid);
+          Eigen::Vector2d c = cr.corners[featureId];
+          pangolin::glDrawCirclePerimeter(c[0], c[1], 3.0);
         }
       }
-      // Increaset flow counter
-      flow_cnt++;
     }
 
+    /*
+     * Ensure number of flows to draw.
+     * Discard die out flows
+     * Add new flows from alive flows if possible
+     */
+    // Check for liveness
+    std::vector<TrackId> flowsToDiscard;
+    for (const auto& flow_id : flows_to_show) {
+      if (flows.count(flow_id.first) == 0) {
+        // If flow disappear
+        flowsToDiscard.emplace_back(flow_id.first);
+      } else {
+        // Or not alive anymore
+        if (!flows.at(flow_id.first).alive)
+          flowsToDiscard.emplace_back(flow_id.first);
+      }
+    }
+    // Discard
+    for (const auto& flow_id : flowsToDiscard) {
+      flows_to_show.erase(flow_id);
+    }
+
+    // Fill it until it reach the numbers needed
+    if (flows_to_show.size() < num_flows_to_draw) {
+      auto num_flows_to_add = num_flows_to_draw - flows_to_show.size();
+
+      // Try to add flows then pick random color associated
+      std::vector<TrackId> flowsToAdd;
+
+      // Pick random flows
+      // First choose alive flows that not show yet
+      std::vector<TrackId> flowsToPick;
+      for (const auto& kv : flows) {
+        if (flows_to_show.count(kv.first) == 0 && kv.second.alive) {
+          flowsToPick.emplace_back(kv.first);
+        }
+      }
+
+      // Now try to pick new flows
+      if (num_flows_to_add >= flowsToPick.size()) {
+        // Pick all
+        for (const auto& flow_id : flowsToPick)
+          flowsToAdd.emplace_back(flow_id);
+      } else {
+        // Random selection.
+        // NOTE: this function is C++17
+        // FIXME Notice in case it doesn't work here
+        std::sample(flowsToPick.begin(), flowsToPick.end(),
+                    std::back_inserter(flowsToAdd), num_flows_to_add,
+                    std::mt19937{std::random_device{}()});
+      }
+
+      // Add to show along with a random color
+      for (const auto& flow_id : flowsToAdd) {
+        // Pick random color
+        float r = rng.uniform(0, 256) / 255.f;
+        float g = rng.uniform(0, 256) / 255.f;
+        float b = rng.uniform(0, 256) / 255.f;
+        Eigen::Vector3f color_code(r, g, b);
+
+        flows_to_show.emplace(flow_id, color_code);
+      }
+    }
+
+    /*
+     * Draw selected flows's trajectory.
+     */
     /// Draw flows of current fcid to
     size_t flow_draw_cnt = 0;
     std::vector<TrackId> flows_to_discard;
 
-    for (const auto& trackId : flows_to_show) {
+    for (const auto& kv : flows_to_show) {
+      const auto& trackId = kv.first;
+      const auto& color_code = kv.second;
+      // TODO Change gl color here
+      glColor3f(color_code[0], color_code[1], color_code[2]);
+
       // Only select some flows
-      if (flows.count(trackId) == 0) {
+      if (flows.count(trackId) == 0 || !flows.at(trackId).alive) {
         flows_to_discard.emplace_back(trackId);
       } else {
         const auto& flow = flows.at(trackId);
@@ -471,12 +547,15 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
         // If flow exist in the frame
         // Draw the point in the current frame
         // And draw flow back to the start
+        int max_track_length = 20;
+        int track_length = 0;
+
         if (flow.flow.count(fcid) > 0 && feature_corners.count(fcid) > 0) {
           const auto& featureId = flow.flow.at(fcid);
 
           const KeypointsData& cr = feature_corners.at(fcid);
           Eigen::Vector2d c = cr.corners[featureId];
-          pangolin::glDrawCirclePerimeter(c[0], c[1], 3.0);
+          //          pangolin::glDrawCirclePerimeter(c[0], c[1], 3.0);
 
           if (show_ids) {
             pangolin::GlFont::I().Text("%d", trackId).Draw(c[0], c[1]);
@@ -490,8 +569,13 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
             const auto& prev_featureId = flow.flow.at(previous_fcid);
             Eigen::Vector2d prev_c =
                 feature_corners.at(previous_fcid).corners[prev_featureId];
+
             // Draw to previous
             pangolin::glDrawLine(c, prev_c);
+
+            // Check maximum length reach
+            track_length++;
+            if (track_length >= max_track_length) break;
 
             // Update previous frame keypoints and fcid
             c = prev_c;
@@ -872,12 +956,9 @@ bool next_step() {
   /// Examine to add new flows by grids
   /// If number of empty cells cross a threshold * total_cells
   /// Then try to create new flows in empty cells
-  size_t num_bin_x = 3;
-  size_t num_bin_y = 3;
-  double empty_cells_thresh = 0.0;
-  //  take_keyframe = add_flows_on_grids(imgl, kdl, num_features_per_image,
-  //                                     num_bin_x, num_bin_y,
-  //                                     empty_cells_thresh);
+  double empty_cells_thresh = 0.9;
+  take_keyframe = add_flows_on_grids(imgl, kdl, num_features_per_image,
+                                     num_bin_x, num_bin_y, empty_cells_thresh);
 
   if (take_keyframe) {
     take_keyframe = false;
@@ -887,17 +968,8 @@ bool next_step() {
 
     pangolin::ManagedImage<uint8_t> imgr = pangolin::LoadImage(images[fcidr]);
 
-    // TODO Add Detect keypoints left image
     // Optical Flow to find keypoints and stereo matches to right image
-
-    add_keypoints(imgl, kdl, num_features_per_image);
     optical_flows(imgl, imgr, kdl, kdr, md_stereo);
-
-    // Change kd_last to kdl for next frame
-    // TODO keep only inliers of kd left; and eleminate duplicates keypoints
-    // (from last frame to current)
-    kd_last = kdl;
-    imgl_last.CopyFrom(imgl);
 
     md_stereo.T_i_j = T_0_1;
 
@@ -915,7 +987,16 @@ bool next_step() {
     feature_matches.insert(
         std::make_pair(std::make_pair(fcidl, fcidr), md_stereo));
 
-    // TODO Keep only inliers match stereo of kdl??? Do we need it or not
+    // Update kd last and img last for next frame
+    // keep only inliers of kd left
+    // FIXME This change the order; Revert to kdl
+    //    kd_last.corners.clear();
+    //    kd_last.corners.reserve(md_stereo.inliers.size());
+    //    for (const auto& inlier : md_stereo.inliers) {
+    //      kd_last.corners.emplace_back(kdl.corners.at(inlier.first));
+    //    }
+    kd_last = kdl;
+    imgl_last.CopyFrom(imgl);
 
     LandmarkMatchData md;
     // CHange to optical flow version
@@ -1068,9 +1149,9 @@ void optimize() {
             << flows.size() << " points and " << num_obs << " observations."
             << std::endl;
 
-  // Fix oldest two cameras to fix SE3 and scale gauge. Making the whole second
-  // camera constant is a bit suboptimal, since we only need 1 DoF, but it's
-  // simple and the initial poses should be good from calibration.
+  // Fix oldest two cameras to fix SE3 and scale gauge. Making the whole
+  // second camera constant is a bit suboptimal, since we only need 1 DoF, but
+  // it's simple and the initial poses should be good from calibration.
   FrameId fid = *(kf_frames.begin());
   // std::cout << "fid " << fid << std::endl;
 
