@@ -368,7 +368,8 @@ void add_new_landmarks_optical_flow(
 // TODO Update this function
 void remove_old_keyframes_optical_flow(const FrameCamId fcidl,
                                        const int max_num_kfs, Cameras& cameras,
-                                       Flows& flows, Flows& old_flows,
+                                       Cameras& old_cameras, Flows& flows,
+                                       Flows& old_flows,
                                        std::set<FrameId>& kf_frames) {
   kf_frames.emplace(fcidl.frame_id);
 
@@ -381,6 +382,7 @@ void remove_old_keyframes_optical_flow(const FrameCamId fcidl,
     auto min_frameId = *kf_frames.begin();
     FrameCamId min_fcidl = FrameCamId(min_frameId, 0);
     FrameCamId min_fcidr = FrameCamId(min_frameId, 1);
+    old_cameras[min_fcidl] = cameras.at(min_fcidl);
 
     // Remove from cameras
     if (cameras.count(min_fcidl) > 0) cameras.erase(min_fcidl);
