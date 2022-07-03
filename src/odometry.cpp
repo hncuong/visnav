@@ -77,6 +77,7 @@ void load_data(const std::string& path, const std::string& calib_path);
 bool next_step();
 void optimize();
 void compute_projections();
+void save_trajectory();
 
 ///////////////////////////////////////////////////////////////////////////////
 /// Constants
@@ -119,6 +120,8 @@ Matches feature_matches;
 
 /// camera poses in the current map
 Cameras cameras;
+// Camera poses
+Cameras all_cameras;
 
 /// copy of cameras for optimization in parallel thread
 Cameras cameras_opt;
@@ -212,6 +215,8 @@ pangolin::Var<bool> continue_next("ui.continue_next", false, true);
 using Button = pangolin::Var<std::function<void(void)>>;
 
 Button next_step_btn("ui.next_step", &next_step);
+
+Button save_trajectory_btn("ui.save_trajectory", &save_trajectory);
 
 ///////////////////////////////////////////////////////////////////////////////
 /// GUI and Boilerplate Implementation
@@ -848,8 +853,8 @@ bool next_step() {
     add_new_landmarks(fcidl, fcidr, kdl, kdr, calib_cam, md_stereo, md,
                       landmarks, next_landmark_id);
 
-    remove_old_keyframes(fcidl, max_num_kfs, cameras, landmarks, old_landmarks,
-                         kf_frames);
+    remove_old_keyframes(fcidl, max_num_kfs, cameras, all_cameras, landmarks,
+                         old_landmarks, kf_frames);
     optimize();
 
     current_pose = cameras[fcidl].T_w_c;
@@ -1013,4 +1018,44 @@ void optimize() {
 
   // Update project info cache
   compute_projections();
+}
+
+void save_trajectory() {
+  all_cameras.insert(cameras.begin(), cameras.end());
+
+  // add last frame as well
+  FrameCamId last_fcidl(current_frame - 1, 0);
+  Camera current_cam;
+  current_cam.T_w_c = current_pose;
+  all_cameras[last_fcidl] = current_cam;
+
+  // Store the trajectory over
+  std::ofstream trajectory_file("stamped_odometry_trajectory.txt");
+  trajectory_file << std::fixed;
+
+  if (trajectory_file.is_open()) {
+    for (auto& camera : all_cameras) {
+      FrameCamId fcid = camera.first;
+      Camera current_camera = camera.second;
+      if (fcid.cam_id == 1) {
+        continue;
+      }
+      const auto& translation = current_camera.T_w_c.translation().data();
+      const auto& quaternion_coefficients =
+          current_camera.T_w_c.so3().unit_quaternion().coeffs();
+      double ts = timestamps[fcid.frame_id] / 1e9;
+
+      trajectory_file << ts << " " << translation[0] << " " << translation[1]
+                      << " " << translation[2] << " "
+                      << quaternion_coefficients.x() << " "
+                      << quaternion_coefficients.y() << " "
+                      << quaternion_coefficients.z() << " "
+                      << quaternion_coefficients.w() << "\n";
+    }
+    trajectory_file.close();
+    std::cout << "Trajectory is saved to stamped_odometry_trajectory.txt"
+              << std::endl;
+  } else {
+    std::cout << "Fail to open the file" << std::endl;
+  }
 }

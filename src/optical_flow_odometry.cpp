@@ -1210,7 +1210,7 @@ void save_trajectory() {
   all_cameras[last_fcidl] = current_cam;
 
   // Store the trajectory over
-  std::ofstream trajectory_file("stamped_trajectory.txt");
+  std::ofstream trajectory_file("stamped_optical_flow_odometry_trajectory.txt");
   trajectory_file << std::fixed;
 
   if (trajectory_file.is_open()) {
@@ -1233,7 +1233,9 @@ void save_trajectory() {
                       << quaternion_coefficients.w() << "\n";
     }
     trajectory_file.close();
-    std::cout << "Trajectory is saved to stamped_trajectory.txt" << std::endl;
+    std::cout
+        << "Trajectory is saved to stamped_optical_flow_odometry_trajectory.txt"
+        << std::endl;
   } else {
     std::cout << "Fail to open the file" << std::endl;
   }
