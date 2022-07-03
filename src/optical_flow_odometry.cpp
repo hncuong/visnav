@@ -128,6 +128,9 @@ Cameras cameras;
 // Camera poses
 Cameras all_cameras;
 
+/// Save all poses for all timestamp
+Cameras all_poses;
+
 /// copy of cameras for optimization in parallel thread
 Cameras cameras_opt;
 
@@ -189,9 +192,9 @@ pangolin::Var<bool> show_old_points3d("hidden.show_old_points3d", true, true);
 
 /// For Optical flows
 pangolin::Var<bool> show_flows("ui.show_flows", true, true);
-pangolin::Var<int> num_flows_to_draw("hidden.num_flows_to_draw", 10, 1, 100);
-pangolin::Var<int> num_bin_x("hidden.num_bin_x", 3, 1, 20);
-pangolin::Var<int> num_bin_y("hidden.num_bin_y", 3, 1, 20);
+pangolin::Var<int> num_flows_to_draw("hidden.num_flows_to_draw", 500, 1, 1000);
+pangolin::Var<int> num_bin_x("hidden.num_bin_x", 10, 1, 20);
+pangolin::Var<int> num_bin_y("hidden.num_bin_y", 10, 1, 20);
 
 //////////////////////////////////////////////
 /// Feature extraction and matching options
@@ -447,7 +450,10 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
   //  show_flows = true;
   if (show_flows) {
     // TODO Pick random color
-    glColor3f(0.0, 0.0, 1.0);  // blue
+    glColor3f(0.0, 0.0, 0.5);  // navy
+    glLineWidth(2.0);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     size_t num_flows = flows.size();
     /// Check alive flows and draw circle around it
@@ -962,8 +968,8 @@ bool next_step() {
   /// If number of empty cells cross a threshold * total_cells
   /// Then try to create new flows in empty cells
   double empty_cells_thresh = 0.9;
-  take_keyframe = add_flows_on_grids(imgl, kdl, num_features_per_image,
-                                     num_bin_x, num_bin_y, empty_cells_thresh);
+  add_flows_on_grids(imgl, kdl, num_features_per_image, num_bin_x, num_bin_y,
+                     empty_cells_thresh);
 
   if (take_keyframe) {
     take_keyframe = false;
@@ -1039,6 +1045,12 @@ bool next_step() {
     }
 
     current_pose = cameras[fcidl].T_w_c;
+    // TODO Save all poses for left cam
+    for (const auto& kv : cameras) {
+      if (kv.first.cam_id == 0) {
+        all_poses.emplace(kv.first, kv.second);
+      }
+    }
 
     // update image views
     change_display_to_image(fcidl);
@@ -1066,6 +1078,9 @@ bool next_step() {
         reprojection_error_pnp_inlier_threshold_pixel, md);
 
     current_pose = md.T_w_c;
+    Camera current_pose;
+    current_pose.T_w_c = md.T_w_c;
+    all_poses.emplace(fcidl, current_pose);
 
     // TODO Use Grid to check. Comment this
     if (int(md.inliers.size()) < new_kf_min_inliers && !opt_running &&
