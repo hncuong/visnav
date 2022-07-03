@@ -83,6 +83,7 @@ bool next_step();
 void optimize();
 void compute_projections();
 void save_trajectory();
+void save_all_trajectory();
 
 ///////////////////////////////////////////////////////////////////////////////
 /// Constants
@@ -243,6 +244,8 @@ using Button = pangolin::Var<std::function<void(void)>>;
 Button next_step_btn("ui.next_step", &next_step);
 
 Button save_trajectory_btn("ui.save_trajectory", &save_trajectory);
+
+Button save_all_trajectory_btn("ui.save_all_trajectory", &save_all_trajectory);
 
 ///////////////////////////////////////////////////////////////////////////////
 /// GUI and Boilerplate Implementation
@@ -471,6 +474,11 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
         }
       }
     }
+
+    pangolin::GlFont::I()
+        .Text("Current frame has %d flows", aliveFlows.size())
+        .Draw(5, text_row);
+    text_row += 20;
 
     /*
      * Ensure number of flows to draw.
@@ -1078,9 +1086,9 @@ bool next_step() {
         reprojection_error_pnp_inlier_threshold_pixel, md);
 
     current_pose = md.T_w_c;
-    Camera current_pose;
-    current_pose.T_w_c = md.T_w_c;
-    all_poses.emplace(fcidl, current_pose);
+    Camera current_cam;
+    current_cam.T_w_c = md.T_w_c;
+    all_poses.emplace(fcidl, current_cam);
 
     // TODO Use Grid to check. Comment this
     if (int(md.inliers.size()) < new_kf_min_inliers && !opt_running &&
@@ -1251,6 +1259,40 @@ void save_trajectory() {
     std::cout
         << "Trajectory is saved to stamped_optical_flow_odometry_trajectory.txt"
         << std::endl;
+  } else {
+    std::cout << "Fail to open the file" << std::endl;
+  }
+}
+
+void save_all_trajectory() {
+  // Store the trajectory over
+  std::ofstream trajectory_file(
+      "stamped_optical_flow_odometry_trajectory_all.txt");
+  trajectory_file << std::fixed;
+
+  if (trajectory_file.is_open()) {
+    for (auto& camera : all_poses) {
+      FrameCamId fcid = camera.first;
+      Camera current_camera = camera.second;
+      if (fcid.cam_id == 1) {
+        continue;
+      }
+      const auto& translation = current_camera.T_w_c.translation().data();
+      const auto& quaternion_coefficients =
+          current_camera.T_w_c.so3().unit_quaternion().coeffs();
+      double ts = timestamps[fcid.frame_id] / 1e9;
+
+      trajectory_file << ts << " " << translation[0] << " " << translation[1]
+                      << " " << translation[2] << " "
+                      << quaternion_coefficients.x() << " "
+                      << quaternion_coefficients.y() << " "
+                      << quaternion_coefficients.z() << " "
+                      << quaternion_coefficients.w() << "\n";
+    }
+    trajectory_file.close();
+    std::cout << "Trajectory is saved to "
+                 "stamped_optical_flow_odometry_trajectory_all.txt"
+              << std::endl;
   } else {
     std::cout << "Fail to open the file" << std::endl;
   }
