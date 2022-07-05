@@ -37,6 +37,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <sstream>
 #include <thread>
 #include <random>
+#include <string>
 
 #include <sophus/se3.hpp>
 
@@ -107,6 +108,10 @@ std::atomic<bool> opt_finished{false};
 std::set<FrameId> kf_frames;
 
 // std::shared_ptr<std::thread> opt_thread;
+
+/// For Optical flows
+int num_consecutive_regular_frames = 0;
+int max_consecutive_regular_frames = 20;
 
 /// intrinsic calibration
 Calibration calib_cam;
@@ -194,8 +199,12 @@ pangolin::Var<bool> show_old_points3d("hidden.show_old_points3d", true, true);
 /// For Optical flows
 pangolin::Var<bool> show_flows("ui.show_flows", true, true);
 pangolin::Var<int> num_flows_to_draw("hidden.num_flows_to_draw", 500, 1, 1000);
+pangolin::Var<int> max_track_length("hidden.max_track_length", 20, 10, 200);
 pangolin::Var<int> num_bin_x("hidden.num_bin_x", 10, 1, 20);
 pangolin::Var<int> num_bin_y("hidden.num_bin_y", 10, 1, 20);
+pangolin::Var<double> backproject_distance_threshold(
+    "hidden.backproject_distance_thresh", 0.25, 0.01, 10);
+pangolin::Var<int> start_frame("hidden.start_frame", 0, 0, 2700);
 
 //////////////////////////////////////////////
 /// Feature extraction and matching options
@@ -212,7 +221,7 @@ pangolin::Var<double> match_max_dist_2d("hidden.match_max_dist_2d", 20.0, 1.0,
 
 pangolin::Var<int> new_kf_min_inliers("hidden.new_kf_min_inliers", 80, 1, 200);
 
-pangolin::Var<int> max_num_kfs("hidden.max_num_kfs", 10, 5, 20);
+pangolin::Var<int> max_num_kfs("hidden.max_num_kfs", 10, 5, 200);
 
 pangolin::Var<double> cam_z_threshold("hidden.cam_z_threshold", 0.1, 1.0, 0.0);
 
@@ -258,6 +267,9 @@ int main(int argc, char** argv) {
   std::string dataset_path = "data/V1_01_easy/mav0";
   std::string cam_calib = "opt_calib.json";
 
+  /// OF Start frame for debugging
+  int start_frame_idx = 0;
+
   CLI::App app{"Visual odometry."};
 
   app.add_option("--show-gui", show_gui, "Show GUI");
@@ -265,6 +277,8 @@ int main(int argc, char** argv) {
                  "Dataset path. Default: " + dataset_path);
   app.add_option("--cam-calib", cam_calib,
                  "Path to camera calibration. Default: " + cam_calib);
+  app.add_option("--start-frame", start_frame_idx,
+                 "Dataset path. Default: " + std::to_string(start_frame_idx));
 
   try {
     app.parse(argc, argv);
@@ -273,6 +287,8 @@ int main(int argc, char** argv) {
   }
 
   load_data(dataset_path, cam_calib);
+  current_frame = start_frame_idx;
+  std::cout << "START with frame " << current_frame << "\n";
 
   if (show_gui) {
     pangolin::CreateWindowAndBind("Main", 1800, 1000);
@@ -404,6 +420,10 @@ int main(int argc, char** argv) {
     }
   }
 
+  /// Save cemeras trajectory for evaluation
+  save_trajectory();
+  save_all_trajectory();
+
   return 0;
 }
 
@@ -454,16 +474,19 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
   if (show_flows) {
     // TODO Pick random color
     glColor3f(0.0, 0.0, 0.5);  // navy
-    glLineWidth(2.0);
+    glLineWidth(3.0);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     size_t num_flows = flows.size();
     /// Check alive flows and draw circle around it
     std::vector<TrackId> aliveFlows;
+    int total_flows_length = 0;
+
     for (const auto& kv : flows) {
       if (kv.second.alive) {
         aliveFlows.emplace_back(kv.first);
+        total_flows_length += kv.second.flow.size();
 
         // Draw circle
         if (kv.second.flow.count(fcid) > 0 && feature_corners.count(fcid) > 0) {
@@ -475,8 +498,13 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
       }
     }
 
+    int mean_flow_length = 0;
+    if (aliveFlows.size() > 0)
+      mean_flow_length = total_flows_length / aliveFlows.size();
+
     pangolin::GlFont::I()
-        .Text("Current frame has %d flows", aliveFlows.size())
+        .Text("Current frame has %d flows, avg length %d", aliveFlows.size(),
+              mean_flow_length)
         .Draw(5, text_row);
     text_row += 20;
 
@@ -566,7 +594,7 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
         // If flow exist in the frame
         // Draw the point in the current frame
         // And draw flow back to the start
-        int max_track_length = 20;
+        //        int max_track_length = 20;
         int track_length = 0;
 
         if (flow.flow.count(fcid) > 0 && feature_corners.count(fcid) > 0) {
@@ -970,16 +998,18 @@ bool next_step() {
 
   // 1st: Flow from last frame to current frame
   MatchData md_last;
-  optical_flows(imgl_last, imgl, kd_last, kdl, md_last);
+  optical_flows(imgl_last, imgl, kd_last, kdl, md_last,
+                backproject_distance_threshold);
 
   /// Examine to add new flows by grids
   /// If number of empty cells cross a threshold * total_cells
   /// Then try to create new flows in empty cells
-  double empty_cells_thresh = 0.9;
+  double empty_cells_thresh = 0.99;
   add_flows_on_grids(imgl, kdl, num_features_per_image, num_bin_x, num_bin_y,
                      empty_cells_thresh);
 
   if (take_keyframe) {
+    num_consecutive_regular_frames = 0;
     take_keyframe = false;
 
     MatchData md_stereo;
@@ -988,7 +1018,8 @@ bool next_step() {
     pangolin::ManagedImage<uint8_t> imgr = pangolin::LoadImage(images[fcidr]);
 
     // Optical Flow to find keypoints and stereo matches to right image
-    optical_flows(imgl, imgr, kdl, kdr, md_stereo);
+    optical_flows(imgl, imgr, kdl, kdr, md_stereo,
+                  backproject_distance_threshold);
 
     md_stereo.T_i_j = T_0_1;
 
@@ -1007,13 +1038,6 @@ bool next_step() {
         std::make_pair(std::make_pair(fcidl, fcidr), md_stereo));
 
     // Update kd last and img last for next frame
-    // keep only inliers of kd left
-    // FIXME This change the order; Revert to kdl
-    //    kd_last.corners.clear();
-    //    kd_last.corners.reserve(md_stereo.inliers.size());
-    //    for (const auto& inlier : md_stereo.inliers) {
-    //      kd_last.corners.emplace_back(kdl.corners.at(inlier.first));
-    //    }
     kd_last = kdl;
     imgl_last.CopyFrom(imgl);
 
@@ -1069,6 +1093,9 @@ bool next_step() {
     current_frame++;
     return true;
   } else {
+    //
+    num_consecutive_regular_frames++;
+
     // Change kd_last to kdl for next frame
     kd_last = kdl;
     imgl_last.CopyFrom(imgl);
@@ -1090,10 +1117,25 @@ bool next_step() {
     current_cam.T_w_c = md.T_w_c;
     all_poses.emplace(fcidl, current_cam);
 
-    // TODO Use Grid to check. Comment this
-    if (int(md.inliers.size()) < new_kf_min_inliers && !opt_running &&
-        !opt_finished) {
+    if (int(md.inliers.size()) < new_kf_min_inliers ||
+        num_consecutive_regular_frames >= max_consecutive_regular_frames
+        //        && !opt_running && !opt_finished
+    ) {
       std::cout << "Found " << md.inliers.size() << " inliers matches."
+                << "Take new keyframe next step!\n";
+      take_keyframe = true;
+    }
+
+    // TODO Use Grid to check.
+    // Add keyframe if flows not cover some part of images
+    // Like threshold over cell
+    // FIXME many cases can not add flows make keyframes too close together
+    double empty_cells_thresh_take_keyframe = 0.2;
+    double empty_cell_ratio =
+        check_flows_empty_cells(fcidl, kdl, flows, imgl, num_bin_x, num_bin_y);
+    if (empty_cell_ratio >= empty_cells_thresh_take_keyframe) {
+      std::cout << "Empty cell ratio " << empty_cell_ratio
+                << " higher than thresh" << empty_cells_thresh_take_keyframe
                 << "Take new keyframe next step!\n";
       take_keyframe = true;
     }

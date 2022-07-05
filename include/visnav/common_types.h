@@ -222,6 +222,9 @@ struct Flow {
 
   /// State of the flow, dead of alive
   bool alive;
+
+  /// Is the flow have a correspond 3d landmark
+  bool is_landmark;
 };
 
 /// collection {imageId => Camera} for all cameras in the map

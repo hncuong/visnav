@@ -54,7 +54,7 @@ void add_keypoints(const pangolin::ManagedImage<uint8_t>& img_raw,
 void optical_flows(const pangolin::ManagedImage<uint8_t>& img_last,
                    const pangolin::ManagedImage<uint8_t>& img_current,
                    const KeypointsData& kd_last, KeypointsData& kd_current,
-                   MatchData& md) {
+                   MatchData& md, double distance_threshold) {
   // If last frame have empty corner
   if (kd_last.corners.size() == 0) return;
 
@@ -77,7 +77,7 @@ void optical_flows(const pangolin::ManagedImage<uint8_t>& img_last,
       (cv::TermCriteria::COUNT) + (cv::TermCriteria::EPS), 10, 0.03);
   cv::Size windowSize(15, 15);
   int pyramid_level = 2;
-  double distance_threshold = 1.0;
+  //  double distance_threshold = 1.0;
 
   std::vector<cv::Mat> old_frame_pyr, frame_pyr;
 
@@ -162,6 +162,8 @@ void find_matches_landmarks_with_otpical_flow(const FrameCamId& fcid_last,
           std::cout << "Invalid: Fcurrent_featureId = " << current_featureId
                     << "\n";
         flow.emplace(fcid_current, current_featureId);
+        // Increase length of flow
+        kv_lm.second.length++;
       } else {
         // If there is not match
         // Discard the flows
@@ -351,10 +353,15 @@ void add_new_landmarks_optical_flow(
       Flow flow;
       flow.p = p;
       flow.alive = true;
+      flow.is_landmark = true;
 
+      // Add observation
       flow.obs.emplace(fcidl, featureId_lr.first);
       flow.obs.emplace(fcidr, featureId_lr.second);
+
+      // Add flow obs
       flow.flow.emplace(fcidl, featureId_lr.first);
+      flow.length = 1;
 
       // Add new landmark
       // and flow

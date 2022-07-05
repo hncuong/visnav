@@ -117,4 +117,50 @@ bool add_flows_on_grids(const pangolin::ManagedImage<uint8_t>& img_raw,
   }
 }
 
+/*
+ * Check ratio of empty cells over all cells
+ * Empty cells is cell without a flow
+ */
+double check_flows_empty_cells(const FrameCamId& fcid, KeypointsData& kd,
+                               const Flows& flows,
+                               const pangolin::ManagedImage<uint8_t>& img_raw,
+                               const int& num_bin_x, const int& num_bin_y) {
+  const auto& width = img_raw.w;
+  const auto& height = img_raw.h;
+  double cell_width = (double)(width + 1) / num_bin_x;
+  double cell_height = (double)(height + 1) / num_bin_y;
+
+  auto total_cells = num_bin_x * num_bin_y;
+  std::set<std::pair<int, int>> flow_cell_exist;
+
+  //  // Examine flow count for each cell
+  for (const auto& kv : flows) {
+    /*
+     * Becareful when converting double to int here; under flow could happen.
+     * Check close to 0 convert here
+     */
+    if (kv.second.alive && kv.second.flow.count(fcid) > 0) {
+      const auto& kp_id = kv.second.flow.at(fcid);
+      const auto& kp = kd.corners.at(kp_id);
+      double kpx = kp[0];
+      double kpy = kp[1];
+      if (kpx < 1.0) kpx = 1.0;
+      if (kpy < 1.0) kpy = 1.0;
+      if (kpx > width - 1.0) kpx = width - 1.0;
+      if (kpy > height - 1.0) kpy = height - 1.0;
+
+      int bin_x = (int)(kpx / cell_width);
+      int bin_y = (int)(kpy / cell_height);
+      if (flow_cell_exist.count(std::make_pair(bin_x, bin_y)) == 0)
+        flow_cell_exist.insert(std::make_pair(bin_x, bin_y));
+    }
+  }
+
+  const auto& n_fill_cells = flow_cell_exist.size();
+  std::cout << n_fill_cells << " cells have flows over " << total_cells
+            << "!\n";
+  double empty_cell_ratio = 1.0 - (double)n_fill_cells / total_cells;
+  return empty_cell_ratio;
+}
+
 }  // namespace visnav
