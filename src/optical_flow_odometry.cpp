@@ -282,6 +282,7 @@ int main(int argc, char** argv) {
   /// OF Start frame for debugging
   int start_frame_idx = 0;
   double backproject_distance_threshold_in_pixels = 0.1;
+  int kf_frequency = 20;
 
   CLI::App app{"Visual odometry."};
 
@@ -290,6 +291,8 @@ int main(int argc, char** argv) {
                  "Dataset path. Default: " + dataset_path);
   app.add_option("--cam-calib", cam_calib,
                  "Path to camera calibration. Default: " + cam_calib);
+
+  // OF options
   app.add_option(
       "--start-frame", start_frame_idx,
       "Start frame index. Default: " + std::to_string(start_frame_idx));
@@ -297,6 +300,9 @@ int main(int argc, char** argv) {
                  "Forward-backward project distance threshold for Optical "
                  "Flow. Default: " +
                      std::to_string(backproject_distance_threshold_in_pixels));
+  app.add_option("--kf_frequency", kf_frequency,
+                 "Number of max consecutive regular frames: " +
+                     std::to_string(kf_frequency));
 
   try {
     app.parse(argc, argv);
@@ -307,9 +313,10 @@ int main(int argc, char** argv) {
   load_data(dataset_path, cam_calib);
   current_frame = start_frame_idx;
   backproject_distance_threshold = backproject_distance_threshold_in_pixels;
+  max_consecutive_regular_frames = kf_frequency;
   std::cout << "START with frame " << current_frame
             << " and backproject threshold " << backproject_distance_threshold
-            << "\n";
+            << " and KF frequency " << max_consecutive_regular_frames << "\n";
 
   if (show_gui) {
     pangolin::CreateWindowAndBind("Main", 1800, 1000);
