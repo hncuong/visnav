@@ -154,17 +154,27 @@ Flows old_landmarks;
 /// determining outliers; indexed by images
 ImageProjections image_projections;
 
+//////////////////////////////////////////////
 /// Optical Flows specific
 /// Keypoints data of last frame
 KeypointsData kd_last;
 /// Last image
 pangolin::ManagedImage<uint8_t> imgl_last;
+
 /// Flows
 Flows flows;
+Flows all_flows;
+
+/// Next flow id to add to all flows
+TrackId next_flow_id = 0;
+
 /// Flows to show
 std::unordered_map<TrackId, Eigen::Vector3f> flows_to_show;
-// For generating random colors
+
+/// For generating random colors
 cv::RNG rng;
+/// Forward-backward back project distance threshold for optical flows
+double backproject_distance_threshold = 0.1;
 
 ///////////////////////////////////////////////////////////////////////////////
 /// GUI parameters
@@ -196,15 +206,17 @@ pangolin::Var<bool> show_cameras3d("hidden.show_cameras", true, true);
 pangolin::Var<bool> show_points3d("hidden.show_points", true, true);
 pangolin::Var<bool> show_old_points3d("hidden.show_old_points3d", true, true);
 
-/// For Optical flows
+//////////////////////////////////////////////
+/// For Optical flows options
 pangolin::Var<bool> show_flows("ui.show_flows", true, true);
 pangolin::Var<int> num_flows_to_draw("hidden.num_flows_to_draw", 500, 1, 1000);
 pangolin::Var<int> max_track_length("hidden.max_track_length", 20, 10, 200);
 pangolin::Var<int> num_bin_x("hidden.num_bin_x", 10, 1, 20);
 pangolin::Var<int> num_bin_y("hidden.num_bin_y", 10, 1, 20);
-pangolin::Var<double> backproject_distance_threshold(
-    "hidden.backproject_distance_thresh", 0.25, 0.01, 10);
-pangolin::Var<int> start_frame("hidden.start_frame", 0, 0, 2700);
+// pangolin::Var<double> backproject_distance_threshold(
+//     "hidden.backproject_distance_thresh", 0.25, 0.01, 10);
+//  pangolin::Var<int> start_frame("hidden.start_frame", 0, 0, 2700);
+pangolin::Var<double> line_width("hidden.line_width", 2.0, 1.0, 3.0);
 
 //////////////////////////////////////////////
 /// Feature extraction and matching options
@@ -269,6 +281,7 @@ int main(int argc, char** argv) {
 
   /// OF Start frame for debugging
   int start_frame_idx = 0;
+  double backproject_distance_threshold_in_pixels = 0.1;
 
   CLI::App app{"Visual odometry."};
 
@@ -277,8 +290,13 @@ int main(int argc, char** argv) {
                  "Dataset path. Default: " + dataset_path);
   app.add_option("--cam-calib", cam_calib,
                  "Path to camera calibration. Default: " + cam_calib);
-  app.add_option("--start-frame", start_frame_idx,
-                 "Dataset path. Default: " + std::to_string(start_frame_idx));
+  app.add_option(
+      "--start-frame", start_frame_idx,
+      "Start frame index. Default: " + std::to_string(start_frame_idx));
+  app.add_option("--dist-thresh", backproject_distance_threshold_in_pixels,
+                 "Forward-backward project distance threshold for Optical "
+                 "Flow. Default: " +
+                     std::to_string(backproject_distance_threshold_in_pixels));
 
   try {
     app.parse(argc, argv);
@@ -288,7 +306,10 @@ int main(int argc, char** argv) {
 
   load_data(dataset_path, cam_calib);
   current_frame = start_frame_idx;
-  std::cout << "START with frame " << current_frame << "\n";
+  backproject_distance_threshold = backproject_distance_threshold_in_pixels;
+  std::cout << "START with frame " << current_frame
+            << " and backproject threshold " << backproject_distance_threshold
+            << "\n";
 
   if (show_gui) {
     pangolin::CreateWindowAndBind("Main", 1800, 1000);
@@ -472,18 +493,20 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
    */
   //  show_flows = true;
   if (show_flows) {
-    // TODO Pick random color
     glColor3f(0.0, 0.0, 0.5);  // navy
-    glLineWidth(3.0);
+    glLineWidth(line_width);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    size_t num_flows = flows.size();
+    /// TODO Change to all flows for visualization
+    /// Maybe no 3d correspondent yet
+    /// Merge later if needed
+    size_t num_flows = all_flows.size();
     /// Check alive flows and draw circle around it
     std::vector<TrackId> aliveFlows;
     int total_flows_length = 0;
 
-    for (const auto& kv : flows) {
+    for (const auto& kv : all_flows) {
       if (kv.second.alive) {
         aliveFlows.emplace_back(kv.first);
         total_flows_length += kv.second.flow.size();
@@ -516,12 +539,14 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
     // Check for liveness
     std::vector<TrackId> flowsToDiscard;
     for (const auto& flow_id : flows_to_show) {
-      if (flows.count(flow_id.first) == 0) {
+      if (all_flows.count(flow_id.first) == 0) {
         // If flow disappear
         flowsToDiscard.emplace_back(flow_id.first);
       } else {
         // Or not alive anymore
-        if (!flows.at(flow_id.first).alive)
+        if (!all_flows.at(flow_id.first).alive)
+          //// if (all_flows.at(flow_id.first).flow.count(fcid) == 0) // Wrong
+          // since there are left and right frame
           flowsToDiscard.emplace_back(flow_id.first);
       }
     }
@@ -540,7 +565,7 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
       // Pick random flows
       // First choose alive flows that not show yet
       std::vector<TrackId> flowsToPick;
-      for (const auto& kv : flows) {
+      for (const auto& kv : all_flows) {
         if (flows_to_show.count(kv.first) == 0 && kv.second.alive) {
           flowsToPick.emplace_back(kv.first);
         }
@@ -586,10 +611,10 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
       glColor3f(color_code[0], color_code[1], color_code[2]);
 
       // Only select some flows
-      if (flows.count(trackId) == 0 || !flows.at(trackId).alive) {
+      if (all_flows.count(trackId) == 0 || !all_flows.at(trackId).alive) {
         flows_to_discard.emplace_back(trackId);
       } else {
-        const auto& flow = flows.at(trackId);
+        const auto& flow = all_flows.at(trackId);
 
         // If flow exist in the frame
         // Draw the point in the current frame
@@ -1001,6 +1026,10 @@ bool next_step() {
   optical_flows(imgl_last, imgl, kd_last, kdl, md_last,
                 backproject_distance_threshold);
 
+  // TODO Add to all flows
+  // Contains all flows
+  update_and_add_flows(fcid_last, md_last, all_flows, next_flow_id);
+
   /// Examine to add new flows by grids
   /// If number of empty cells cross a threshold * total_cells
   /// Then try to create new flows in empty cells
@@ -1130,15 +1159,17 @@ bool next_step() {
     // Add keyframe if flows not cover some part of images
     // Like threshold over cell
     // FIXME many cases can not add flows make keyframes too close together
-    double empty_cells_thresh_take_keyframe = 0.2;
-    double empty_cell_ratio =
-        check_flows_empty_cells(fcidl, kdl, flows, imgl, num_bin_x, num_bin_y);
-    if (empty_cell_ratio >= empty_cells_thresh_take_keyframe) {
-      std::cout << "Empty cell ratio " << empty_cell_ratio
-                << " higher than thresh" << empty_cells_thresh_take_keyframe
-                << "Take new keyframe next step!\n";
-      take_keyframe = true;
-    }
+    //    double empty_cells_thresh_take_keyframe = 0.2;
+    //    double empty_cell_ratio =
+    //        check_flows_empty_cells(fcidl, kdl, flows, imgl, num_bin_x,
+    //        num_bin_y);
+    //    if (empty_cell_ratio >= empty_cells_thresh_take_keyframe) {
+    //      std::cout << "Empty cell ratio " << empty_cell_ratio
+    //                << " higher than thresh" <<
+    //                empty_cells_thresh_take_keyframe
+    //                << "Take new keyframe next step!\n";
+    //      take_keyframe = true;
+    //    }
 
     //    if (!opt_running && opt_finished) {
     //      //      opt_thread->join();

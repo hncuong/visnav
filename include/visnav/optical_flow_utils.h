@@ -308,16 +308,12 @@ void add_new_landmarks_optical_flow(
     const auto& trackId = feature_n_Track.second;
 
     // Add observation
-    // DEBUG if featureId_left = -1
-    if (featureId_left < 0)
-      std::cout << "Invalid: FeatureId left match = " << featureId_left << "\n";
     flows.at(trackId).obs.emplace(fcidl, featureId_left);
     if (stereo_inliers_map.count(featureId_left) > 0) {
       flows.at(trackId).obs.emplace(fcidr,
                                     stereo_inliers_map.at(featureId_left));
-      // Set this in stereo_inliers_map to -1 to mark that it already exist in
+      // Set this to mark that it already exist in
       // landmark
-      //      stereo_inliers_map.at(featureId_left) = LANDMARK_EXIST;
       featureExistInflows.emplace(featureId_left);
     }
   }
@@ -504,6 +500,67 @@ void bundle_adjustment_for_flows(const Corners& feature_corners,
     case 2:
       std::cout << summary.FullReport() << std::endl;
       break;
+  }
+}
+
+/**
+ * Update and add flows to all flows
+ * For each match from last frame to current frame as a flow observation if flow
+ * exist Else add a new flow
+ */
+void update_and_add_flows(const FrameCamId& fcid_last, const MatchData& md_last,
+                          Flows& all_flows, TrackId& current_flow_id) {
+  // Add a matches map here
+  // If no match to last frame available
+  if (md_last.matches.size() == 0) return;
+
+  // For each flows, find featureId of last frame
+  // Map to featureId in new frame with md_last
+  // Map featureId last -> current frame
+  std::map<FeatureId, FeatureId> matches_map;
+  std::set<FeatureId> featuresExistInFlows;
+  for (const auto& kv : md_last.matches) {
+    matches_map.insert(std::make_pair(kv.first, kv.second));
+  }
+  FrameCamId fcid_current =
+      FrameCamId(fcid_last.frame_id + 1, fcid_last.cam_id);
+
+  // Add observation for existing flows
+  for (auto& kv_fl : all_flows) {
+    auto& fl = kv_fl.second;
+
+    if (fl.flow.count(fcid_last) > 0) {
+      // trackId -> last feature Id
+      const FeatureId& last_featureId = fl.flow.at(fcid_last);
+
+      // If there is a match: last featureId -> current featureId
+      if (matches_map.count(last_featureId) > 0) {
+        featuresExistInFlows.emplace(last_featureId);
+        const FeatureId& current_featureId = matches_map.at(last_featureId);
+
+        // Add observer for the flow
+        fl.flow.emplace(fcid_current, current_featureId);
+        // Increase length of flow
+        fl.length++;
+      } else {
+        // If there is not match
+        // Flow is dead
+        fl.alive = false;
+      }
+    }
+  }
+
+  // Add new flows for non exist
+  for (const auto& kv : md_last.matches) {
+    if (featuresExistInFlows.count(kv.first) == 0) {
+      Flow fl;
+      fl.alive = true;
+      fl.flow.emplace(fcid_current, kv.second);
+      fl.flow.emplace(fcid_last, kv.first);
+      fl.length = 2;
+      all_flows.emplace(current_flow_id, fl);
+      current_flow_id++;
+    }
   }
 }
 
