@@ -70,6 +70,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <visnav/serialization.h>
 
+// Header files for custom image and image pyramid
+#include <visnav/image_pyr.h>
+
 using namespace visnav;
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -175,6 +178,9 @@ std::unordered_map<TrackId, Eigen::Vector3f> flows_to_show;
 cv::RNG rng;
 /// Forward-backward back project distance threshold for optical flows
 double backproject_distance_threshold = 0.1;
+
+/// Image Pyramid for leftframe, rightframe, nextframe
+visnav::ManagedImagePyr<uint8_t> left_pyr, right_pyr, next_pyr, imgl_last_pyr;
 
 ///////////////////////////////////////////////////////////////////////////////
 /// GUI parameters
@@ -1053,7 +1059,18 @@ bool next_step() {
   KeypointsData kdl;
 
   pangolin::ManagedImage<uint8_t> imgl = pangolin::LoadImage(images[fcidl]);
+  pangolin::ManagedImage<uint8_t> imgr = pangolin::LoadImage(images[fcidr]);
   std::cout << "NEXT STEP: Processing " << fcidl << "\n";
+
+  // Init image pyr
+
+  //  visnav::ManagedImage<uint8_t> imgl, imgr;
+  //  imgl.CopyFrom(
+  //      visnav::Image<uint8_t>(_imgl.ptr, _imgl.w, _imgl.h, _imgl.pitch));
+  //  imgr.CopyFrom(
+  //      visnav::Image<uint8_t>(_imgr.ptr, _imgr.w, _imgr.h, _imgr.pitch));
+  //  left_pyr.setFromImage(imgl, PYRAMID_LEVEL);
+  //  right_pyr.setFromImage(imgr, PYRAMID_LEVEL);
 
   // 1st: Flow from last frame to current frame
   MatchData md_last;

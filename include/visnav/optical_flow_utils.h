@@ -28,9 +28,17 @@
 #include <Eigen/Dense>
 #include <sophus/se3.hpp>
 
+/// Additional packages for Optical Flow
+#include <visnav/image.h>
+#include <visnav/image_pyr.h>
+#include <visnav/patch.h>
+#include <sophus/se2.hpp>
+
 const int PYRAMID_LEVEL = 3;
 
 namespace visnav {
+// Define type for OpticalFlow patch template
+typedef OpticalFlowPatch<float, Pattern50<float>> PatchT;
 
 // Add new keypoints to current exist keypoints in a frame
 // with new detected corners
@@ -561,6 +569,178 @@ void update_and_add_flows(const FrameCamId& fcid_last, const MatchData& md_last,
       all_flows.emplace(current_flow_id, fl);
       current_flow_id++;
     }
+  }
+}
+
+void initialize_transforms(
+    const LandmarkMatchData& md, const KeypointsData& kdl,
+    const std::vector<Eigen::Vector2d,
+                      Eigen::aligned_allocator<Eigen::Vector2d>>&
+        projected_points,
+    const std::vector<TrackId>& projected_track_ids, const bool stereo_init,
+    std::unordered_map<FeatureId, Eigen::AffineCompact2f>& transforms,
+    std::unordered_map<FeatureId, TrackId>& prop_tracks) {
+  for (size_t i = 0; i < kdl.corners.size(); i++) {
+    transforms[i].setIdentity();
+    transforms[i].translation() = kdl.corners[i].cast<float>();
+  }
+
+  // Initilize transforms in case of stereo matching
+  if (!stereo_init) {
+    for (const auto& match : md.inliers) {
+      FeatureId fid = match.first;
+      TrackId tid = match.second;
+
+      for (size_t t = 0; t < projected_track_ids.size(); t++) {
+        if (projected_track_ids[t] == tid) {
+          transforms[fid].translation() = projected_points[t].cast<float>();
+        }
+      }
+    }
+  }
+}
+
+bool trackPointAtLevel(const visnav::Image<const uint8_t>& img_2,
+                       const PatchT& dp, Eigen::AffineCompact2f& transform) {
+  bool patch_valid = true;
+  int max_iterations = 20;
+
+  for (int iteration = 0; patch_valid && iteration < max_iterations;
+       iteration++) {
+    typename PatchT::VectorP res;
+
+    typename PatchT::Matrix2P transformed_pat =
+        transform.linear().matrix() * dp.pattern2;
+    transformed_pat.colwise() += transform.translation();
+
+    bool valid = dp.residual(img_2, transformed_pat, res);
+
+    if (valid) {
+      typename PatchT::Vector3 inc = -dp.H_se2_inv_J_se2_T * res;
+      // std::cout << "Here..." << dp.H_se2_inv_J_se2_T << std::endl;
+      // std::cout << "Here..." << res << std::endl;
+      transform *= Sophus::SE2f::exp(inc).matrix();
+      // std::cout << "... And there" << std::endl;
+      const int filter_margin = 3;
+
+      if (!img_2.InBounds(transform.translation(), filter_margin))
+        patch_valid = false;
+    } else {
+      patch_valid = false;
+    }
+    // std::cout << "PATCH VALID: " << patch_valid << std::endl;
+  }
+
+  return patch_valid;
+}
+
+bool trackPoint(const visnav::ManagedImagePyr<uint8_t>& old_pyr,
+                const visnav::ManagedImagePyr<uint8_t>& pyr,
+                const size_t& num_levels,
+                const Eigen::AffineCompact2f& old_transform,
+                Eigen::AffineCompact2f& transform) {
+  bool patch_valid = true;
+
+  transform.linear().setIdentity();
+
+  for (int level = num_levels; level >= 0 && patch_valid; level--) {
+    const float scale = 1 << level;  // bit shift
+
+    transform.translation() /= scale;
+
+    PatchT p(old_pyr.lvl(level), old_transform.translation() / scale);
+
+    // Perform tracking on current level
+    patch_valid &= trackPointAtLevel(pyr.lvl(level), p, transform);
+
+    transform.translation() *= scale;
+  }
+
+  transform.linear() = old_transform.linear() * transform.linear();
+
+  return patch_valid;
+}
+
+void find_motion_consec(
+    const KeypointsData& kd, const visnav::ManagedImagePyr<uint8_t>& old_pyr,
+    const visnav::ManagedImagePyr<uint8_t>& pyr, const size_t& num_levels,
+    std::unordered_map<FeatureId, Eigen::AffineCompact2f>& transforms,
+    bool prop, std::unordered_map<FeatureId, TrackId>& prop_tracks) {
+  float optical_flow_max_recovered_dist2 = 0.04;
+
+  for (size_t i = 0; i < kd.corners.size(); i++) {
+    // const Eigen::Vector2d p2d = kd.corners[i];
+    Eigen::AffineCompact2f transform_1 = transforms[i];
+    // transform_1.setIdentity();
+    // transform_1.translation() += p2d.cast<float>();
+    Eigen::AffineCompact2f transform_2 = transform_1;
+    // std::cout << "BEFORE:\n" << i << std::endl;
+    // PatchT patch(img1, transform_1.translation());
+
+    transform_2.linear().setIdentity();
+    bool valid = trackPoint(old_pyr, pyr, num_levels, transform_1, transform_2);
+    bool flag = false;
+    transform_2.linear() = transform_1.linear() * transform_2.linear();
+    // std::cout << "AFTER:\n" << i << std::endl;
+    // std::cout << "NEW TRANSFORMS:\n" << transforms[i].matrix() << std::endl;
+
+    if (valid) {
+      Eigen::AffineCompact2f transform_1_recovered = transform_2;
+      // PatchT patch2(img2, transform_2.translation());
+
+      transform_1_recovered.linear().setIdentity();
+      valid = trackPoint(pyr, old_pyr, num_levels, transform_2,
+                         transform_1_recovered);
+      transform_1_recovered.linear() =
+          transform_2.linear() * transform_1_recovered.linear();
+
+      if (valid) {
+        float dist2 =
+            (transform_1.translation() - transform_1_recovered.translation())
+                .squaredNorm();
+
+        if (dist2 < optical_flow_max_recovered_dist2) {
+          transforms[i] = transform_2;
+          flag = true;
+        }
+      }
+    }
+    if (!flag) {
+      transforms.erase(i);
+      if (prop) prop_tracks.erase(i);
+    }
+  }
+}
+
+void match_optical(
+    KeypointsData& kdr,
+    const std::unordered_map<FeatureId, Eigen::AffineCompact2f>& transforms,
+    std::vector<std::pair<int, int>>& matches, bool stereo,
+    std::unordered_map<FeatureId, TrackId>& prop_tracks) {
+  kdr.corners.clear();
+  matches.clear();
+  int i = 0;
+  int j = 0;
+  std::unordered_map<FeatureId, TrackId> updated_tracks;
+  for (const auto& t : transforms) {
+    // std::cout << "SEG FAULT?" << std::endl;
+    // if(t.second.data)
+    if (stereo) {
+      kdr.corners.push_back(t.second.translation().cast<double>());
+    } else {
+      if (prop_tracks.find(t.first) != prop_tracks.end()) {
+        kdr.corners.push_back(t.second.translation().cast<double>());
+        updated_tracks.insert(std::make_pair(j, prop_tracks[t.first]));
+        j++;
+      }
+    }
+
+    matches.emplace_back(t.first, i);
+    i++;
+  }
+  if (!stereo) {
+    //
+    prop_tracks = updated_tracks;
   }
 }
 
