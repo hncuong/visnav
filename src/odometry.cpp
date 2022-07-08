@@ -675,6 +675,40 @@ void draw_scene() {
     render_camera(current_pose.matrix(), 2.0f, color_camera_current, 0.1f);
   }
 
+  // render trajectory
+  // Draw the trajectory of left cameras
+  bool show_trajectory = true;
+  FrameCamId fcid_cur(show_frame1, 0);
+  FrameCamId fcid_prev(fcid_cur.frame_id - 1, 0);
+  glLineWidth(2.0);
+  glColor3f(1.0, 0.0, 0.0);  // red
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+  if (show_trajectory) {
+    // Draw line to the last frame
+    if (all_poses.count(fcid_cur) > 0) {
+      while (all_poses.count(fcid_prev) > 0) {
+        // T_w_c to location
+        const auto& cur_Twc = all_poses.at(fcid_cur).T_w_c;
+        const auto& prev_Twc = all_poses.at(fcid_prev).T_w_c;
+
+        Eigen::Vector3d camera_p3d = Eigen::Vector3d::Zero();
+        Eigen::Vector3d cur_p3d = cur_Twc * camera_p3d;
+        Eigen::Vector3d prev_p3d = prev_Twc * camera_p3d;
+
+        std::vector<Eigen::Vector3d> vertices;
+        vertices.emplace_back(cur_p3d);
+        vertices.emplace_back(prev_p3d);
+        pangolin::glDrawLines(vertices);
+
+        // Update cur and last
+        fcid_cur = FrameCamId(fcid_prev.frame_id, 0);
+        fcid_prev = FrameCamId(fcid_cur.frame_id - 1, 0);
+      }
+    }
+  }
+
   // render points
   if (show_points3d && landmarks.size() > 0) {
     glPointSize(3.0);
