@@ -70,6 +70,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <visnav/serialization.h>
 
+// Header files for custom image and image pyramid
+#include <visnav/image/image_pyr.h>
+
 using namespace visnav;
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -176,6 +179,15 @@ cv::RNG rng;
 /// Forward-backward back project distance threshold for optical flows
 double backproject_distance_threshold = 0.1;
 
+/// Image Pyramid for leftframe, rightframe, nextframe
+visnav::ManagedImagePyr<uint8_t> left_pyr, right_pyr, next_pyr, imgl_last_pyr;
+
+/// Map storing FeatureID and its corresponding TrackID
+std::unordered_map<FeatureId, TrackId> propagate_tracks;
+
+/// Last match feature to Track
+LandmarkMatchData last_md_featureToTrack;
+
 ///////////////////////////////////////////////////////////////////////////////
 /// GUI parameters
 ///////////////////////////////////////////////////////////////////////////////
@@ -211,11 +223,8 @@ pangolin::Var<bool> show_old_points3d("hidden.show_old_points3d", true, true);
 pangolin::Var<bool> show_flows("ui.show_flows", true, true);
 pangolin::Var<int> num_flows_to_draw("hidden.num_flows_to_draw", 500, 1, 1000);
 pangolin::Var<int> max_track_length("hidden.max_track_length", 20, 10, 200);
-pangolin::Var<int> num_bin_x("hidden.num_bin_x", 10, 1, 20);
-pangolin::Var<int> num_bin_y("hidden.num_bin_y", 10, 1, 20);
-// pangolin::Var<double> backproject_distance_threshold(
-//     "hidden.backproject_distance_thresh", 0.25, 0.01, 10);
-//  pangolin::Var<int> start_frame("hidden.start_frame", 0, 0, 2700);
+pangolin::Var<int> num_bin_x("hidden.num_bin_x", 4, 1, 20);
+pangolin::Var<int> num_bin_y("hidden.num_bin_y", 4, 1, 20);
 pangolin::Var<double> line_width("hidden.line_width", 2.0, 1.0, 3.0);
 
 //////////////////////////////////////////////
@@ -1060,15 +1069,49 @@ bool next_step() {
   KeypointsData kdl;
 
   pangolin::ManagedImage<uint8_t> imgl = pangolin::LoadImage(images[fcidl]);
+  pangolin::ManagedImage<uint8_t> imgr = pangolin::LoadImage(images[fcidr]);
   std::cout << "NEXT STEP: Processing " << fcidl << "\n";
+
+  // convert pangolin::ManagedImage --> visnav::Image
+  visnav::ManagedImage<uint8_t> imgl_v, imgr_v, imgl_last_v;
+  visnav::ManagedImagePyr<uint8_t> imgl_pyr, imgr_pyr, imgl_last_pyr;
+
+  imgl_v.CopyFrom(visnav::Image<uint8_t>(imgl.ptr, imgl.w, imgl.h, imgl.pitch));
+
+  imgr_v.CopyFrom(visnav::Image<uint8_t>(imgr.ptr, imgr.w, imgr.h, imgr.pitch));
+
+  if (current_frame > 0) {
+    imgl_last_v.CopyFrom(visnav::Image<uint8_t>(imgl_last.ptr, imgl_last.w,
+                                                imgl_last.h, imgl_last.pitch));
+    imgl_last_pyr.setFromImage(imgl_last_v, PYRAMID_LEVEL);
+  }
+
+  std::vector<Eigen::Vector2d, Eigen::aligned_allocator<Eigen::Vector2d>>
+      projected_points;
+  std::vector<TrackId> projected_track_ids;
+
+  MatchData md_stereo;
+  LandmarkMatchData md;
+  KeypointsData kdr;
 
   // 1st: Flow from last frame to current frame
   MatchData md_last;
-  optical_flows(imgl_last, imgl, kd_last, kdl, md_last,
-                backproject_distance_threshold);
 
-  // TODO Add to all flows
-  // Contains all flows
+  /// Do Optical Flow here
+  if (current_frame > 0) {
+    std::unordered_map<FeatureId, Eigen::AffineCompact2f>
+        last_current_transforms;
+    project_landmarks_of(current_pose, calib_cam.intrinsics[0], flows,
+                         cam_z_threshold, projected_points,
+                         projected_track_ids);
+
+    initialize_transforms(last_md_featureToTrack, kd_last, projected_points,
+                          projected_track_ids, false, last_current_transforms);
+    matchOpticalFlow(imgl_last_v, imgl_v, kd_last, kdl, md_last, PYRAMID_LEVEL,
+                     0.04, last_current_transforms);
+  }
+
+  // Add to all flows for visualization
   update_and_add_flows(fcid_last, md_last, all_flows, next_flow_id);
 
   /// Examine to add new flows by grids
@@ -1082,19 +1125,21 @@ bool next_step() {
     num_consecutive_regular_frames = 0;
     take_keyframe = false;
 
-    MatchData md_stereo;
-    KeypointsData kdr;
-
-    pangolin::ManagedImage<uint8_t> imgr = pangolin::LoadImage(images[fcidr]);
-
     // Optical Flow to find keypoints and stereo matches to right image
-    optical_flows(imgl, imgr, kdl, kdr, md_stereo,
-                  backproject_distance_threshold);
+    //    optical_flows(imgl, imgr, kdl, kdr, md_stereo,
+    //                  backproject_distance_threshold);
 
     md_stereo.T_i_j = T_0_1;
 
     Eigen::Matrix3d E;
     computeEssential(T_0_1, E);
+
+    /// Do Optical Flow here
+    std::unordered_map<FeatureId, Eigen::AffineCompact2f> l_r_transforms;
+    initialize_transforms(md, kdl, projected_points, projected_track_ids, true,
+                          l_r_transforms);
+    matchOpticalFlow(imgl_v, imgr_v, kdl, kdr, md_stereo, PYRAMID_LEVEL,
+                     backproject_distance_threshold, l_r_transforms);
 
     findInliersEssential(kdl, kdr, calib_cam.intrinsics[0],
                          calib_cam.intrinsics[1], E, 1e-3, md_stereo);
@@ -1111,7 +1156,6 @@ bool next_step() {
     kd_last = kdl;
     imgl_last.CopyFrom(imgl);
 
-    LandmarkMatchData md;
     // CHange to optical flow version
     // Update find match landmark for Optical flow; landmark that does not
     // have obs last frame
@@ -1131,6 +1175,9 @@ bool next_step() {
     // TODO CHange to optical flow version
     add_new_landmarks_optical_flow(fcidl, fcidr, kdl, kdr, calib_cam, md_stereo,
                                    md, flows, next_landmark_id);
+    // Update match for next round
+    last_md_featureToTrack = md;
+
     // TODO CHange to optical flow version
     remove_old_keyframes_optical_flow(fcidl, max_num_kfs, cameras, all_cameras,
                                       flows, old_landmarks, kf_frames);
@@ -1181,6 +1228,9 @@ bool next_step() {
     localize_camera_optical_flow(
         current_pose, calib_cam.intrinsics[0], kdl, flows,
         reprojection_error_pnp_inlier_threshold_pixel, md);
+
+    // Update match for next round
+    last_md_featureToTrack = md;
 
     current_pose = md.T_w_c;
     Camera current_cam;

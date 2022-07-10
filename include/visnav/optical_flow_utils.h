@@ -25,12 +25,24 @@
 
 #include <pangolin/image/managed_image.h>
 
+/// Import the image type from Basalt
+#include <visnav/image/image.h>
+#include <visnav/image/image_pyr.h>
+
 #include <Eigen/Dense>
 #include <sophus/se3.hpp>
+
+/// Additional packages for Optical Flow
+#include <visnav/image/image.h>
+#include <visnav/image/image_pyr.h>
+#include <visnav/patch.h>
+#include <sophus/se2.hpp>
 
 const int PYRAMID_LEVEL = 3;
 
 namespace visnav {
+// Define type for OpticalFlow patch template
+typedef OpticalFlowPatch<float, Pattern50<float>> PatchT;
 
 // Add new keypoints to current exist keypoints in a frame
 // with new detected corners
@@ -560,6 +572,236 @@ void update_and_add_flows(const FrameCamId& fcid_last, const MatchData& md_last,
       fl.length = 2;
       all_flows.emplace(current_flow_id, fl);
       current_flow_id++;
+    }
+  }
+}
+
+void initialize_transforms(
+    const LandmarkMatchData& md, const KeypointsData& kdl,
+    const std::vector<Eigen::Vector2d,
+                      Eigen::aligned_allocator<Eigen::Vector2d>>&
+        projected_points,
+    const std::vector<TrackId>& projected_track_ids, const bool stereo_init,
+    std::unordered_map<FeatureId, Eigen::AffineCompact2f>& transforms) {
+  // Init transformation to track
+  for (size_t i = 0; i < kdl.corners.size(); i++) {
+    Eigen::AffineCompact2f tf;
+    tf.setIdentity();
+    tf.translation() = kdl.corners[i].cast<float>();
+    transforms.emplace(i, tf);
+  }
+
+  // Initilize transforms in case of non stereo matching
+  // TODO Maybe discard this to test
+  if (!stereo_init) {
+    for (const auto& match : md.inliers) {
+      FeatureId fid = match.first;
+      TrackId tid = match.second;
+
+      for (size_t t = 0; t < projected_track_ids.size(); t++) {
+        if (projected_track_ids[t] == tid) {
+          transforms.at(fid).translation() = projected_points[t].cast<float>();
+        }
+      }
+    }
+  }
+}
+
+bool trackPointAtLevel(const visnav::Image<const uint8_t>& img_2,
+                       const PatchT& dp, Eigen::AffineCompact2f& transform) {
+  bool patch_valid = true;
+  int max_iterations = 100;
+
+  for (int iteration = 0; patch_valid && iteration < max_iterations;
+       iteration++) {
+    typename PatchT::VectorP res;
+
+    typename PatchT::Matrix2P transformed_pat =
+        transform.linear().matrix() * dp.pattern2;
+    transformed_pat.colwise() += transform.translation();
+
+    bool valid = dp.residual(img_2, transformed_pat, res);
+
+    if (valid) {
+      typename PatchT::Vector3 inc = -dp.H_se2_inv_J_se2_T * res;
+      // std::cout << "Here..." << dp.H_se2_inv_J_se2_T << std::endl;
+      // std::cout << "Here..." << res << std::endl;
+      transform *= Sophus::SE2f::exp(inc).matrix();
+      // std::cout << "... And there" << std::endl;
+      const int filter_margin = 3;
+
+      if (!img_2.InBounds(transform.translation(), filter_margin))
+        patch_valid = false;
+    } else {
+      patch_valid = false;
+    }
+    // std::cout << "PATCH VALID: " << patch_valid << std::endl;
+  }
+
+  return patch_valid;
+}
+
+bool trackPoint(const visnav::ManagedImagePyr<uint8_t>& old_pyr,
+                const visnav::ManagedImagePyr<uint8_t>& pyr,
+                const size_t& num_levels,
+                const Eigen::AffineCompact2f& old_transform,
+                Eigen::AffineCompact2f& transform) {
+  bool patch_valid = true;
+
+  transform.linear().setIdentity();
+
+  for (int level = num_levels; level >= 0 && patch_valid; level--) {
+    const float scale = 1 << level;  // bit shift
+
+    transform.translation() /= scale;
+
+    PatchT p(old_pyr.lvl(level), old_transform.translation() / scale);
+
+    // Perform tracking on current level
+    patch_valid &= trackPointAtLevel(pyr.lvl(level), p, transform);
+
+    transform.translation() *= scale;
+  }
+
+  transform.linear() = old_transform.linear() * transform.linear();
+
+  return patch_valid;
+}
+
+void find_motion_consec(
+    const KeypointsData& kd, const visnav::ManagedImagePyr<uint8_t>& old_pyr,
+    const visnav::ManagedImagePyr<uint8_t>& pyr, const size_t& num_levels,
+    const double& distance_threshold,
+    std::unordered_map<FeatureId, Eigen::AffineCompact2f>& transforms) {
+  for (size_t i = 0; i < kd.corners.size(); i++) {
+    // const Eigen::Vector2d p2d = kd.corners[i];
+    Eigen::AffineCompact2f transform_1 = transforms[i];
+    // transform_1.setIdentity();
+    // transform_1.translation() += p2d.cast<float>();
+    Eigen::AffineCompact2f transform_2 = transform_1;
+    // std::cout << "BEFORE:\n" << i << std::endl;
+    // PatchT patch(img1, transform_1.translation());
+
+    transform_2.linear().setIdentity();
+    bool valid = trackPoint(old_pyr, pyr, num_levels, transform_1, transform_2);
+    bool flag = false;
+    transform_2.linear() = transform_1.linear() * transform_2.linear();
+    // std::cout << "AFTER:\n" << i << std::endl;
+    // std::cout << "NEW TRANSFORMS:\n" << transforms[i].matrix() << std::endl;
+
+    if (valid) {
+      Eigen::AffineCompact2f transform_1_recovered = transform_2;
+      // PatchT patch2(img2, transform_2.translation());
+
+      transform_1_recovered.linear().setIdentity();
+      valid = trackPoint(pyr, old_pyr, num_levels, transform_2,
+                         transform_1_recovered);
+      transform_1_recovered.linear() =
+          transform_2.linear() * transform_1_recovered.linear();
+
+      if (valid) {
+        float dist2 =
+            (transform_1.translation() - transform_1_recovered.translation())
+                .squaredNorm();
+
+        if (dist2 < distance_threshold) {
+          transforms[i] = transform_2;
+          flag = true;
+        }
+      }
+    }
+
+    // Delete transform not under threshol
+    if (!flag) {
+      transforms.erase(i);
+    }
+  }
+}
+
+/**
+ * @brief match_optical: Fill keypoints and matches with transform
+ * @param kdr keypoints in target frame to be filled
+ * @param transforms 2D affine transforms
+ * @param matches matches from source to target frame
+ */
+void match_optical(
+    KeypointsData& kdr,
+    const std::unordered_map<FeatureId, Eigen::AffineCompact2f>& transforms,
+    std::vector<std::pair<int, int>>& matches) {
+  kdr.corners.clear();
+  matches.clear();
+  int i = 0;
+  int j = 0;
+  std::unordered_map<FeatureId, TrackId> updated_tracks;
+  for (const auto& t : transforms) {
+    // std::cout << "SEG FAULT?" << std::endl;
+    // if(t.second.data)
+    kdr.corners.push_back(t.second.translation().cast<double>());
+    matches.emplace_back(t.first, i);
+    i++;
+  }
+}
+
+/**
+ * @brief matchOpticalFlow: Use Optical flows to find matches and keypoints in
+ * target frame from a source frame
+ * @param img_last
+ * @param img_current
+ * @param kd_last
+ * @param kd_current
+ * @param md
+ * @param pyramid_level
+ * @param distance_threshold
+ * @param transforms
+ */
+void matchOpticalFlow(
+    const visnav::ManagedImage<uint8_t>& img_last,
+    const visnav::ManagedImage<uint8_t>& img_current,
+    const KeypointsData& kd_last, KeypointsData& kd_current, MatchData& md,
+    int pyramid_level, double distance_threshold,
+    std::unordered_map<FeatureId, Eigen::AffineCompact2f>& transforms) {
+  // Create Image pyramid for two image pairs
+  visnav::ManagedImagePyr<uint8_t> img_last_pyr, img_current_pyr;
+  img_last_pyr.setFromImage(img_last, pyramid_level);
+  img_current_pyr.setFromImage(img_current, pyramid_level);
+
+  // Calculate transformation
+  find_motion_consec(kd_last, img_last_pyr, img_current_pyr, pyramid_level,
+                     distance_threshold, transforms);
+
+  // Fill keypoints in target frame and maches
+  match_optical(kd_current, transforms, md.matches);
+}
+
+void project_landmarks_of(
+    const Sophus::SE3d& current_pose,
+    const std::shared_ptr<AbstractCamera<double>>& cam, const Flows& landmarks,
+    const double cam_z_threshold,
+    std::vector<Eigen::Vector2d, Eigen::aligned_allocator<Eigen::Vector2d>>&
+        projected_points,
+    std::vector<TrackId>& projected_track_ids) {
+  projected_points.clear();
+  projected_track_ids.clear();
+
+  // TODO SHEET 5: project landmarks to the image plane using the current
+  // locations of the cameras. Put 2d coordinates of the projected points into
+  // projected_points and the corresponding id of the landmark into
+  // projected_track_ids.
+  for (const auto& kv : landmarks) {
+    TrackId trackId = kv.first;
+    const auto& p_3w = kv.second.p;
+
+    // Project to camera
+    auto p_3c = current_pose.inverse() * p_3w;
+    // Only take landmark infront of camera
+    if (p_3c.z() >= cam_z_threshold) {
+      auto p_2c = cam->project(p_3c);
+      // CHeck if it inside the image
+      if (p_2c.x() >= 0. && p_2c.x() <= cam->width() - 1. && p_2c.y() >= 0. &&
+          p_2c.y() <= cam->height() - 1.) {
+        projected_points.emplace_back(p_2c);
+        projected_track_ids.emplace_back(trackId);
+      }
     }
   }
 }
