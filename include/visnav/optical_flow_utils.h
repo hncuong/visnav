@@ -25,12 +25,16 @@
 
 #include <pangolin/image/managed_image.h>
 
+/// Import the image type from Basalt
+#include <visnav/image/image.h>
+#include <visnav/image/image_pyr.h>
+
 #include <Eigen/Dense>
 #include <sophus/se3.hpp>
 
 /// Additional packages for Optical Flow
-#include <visnav/image.h>
-#include <visnav/image_pyr.h>
+#include <visnav/image/image.h>
+#include <visnav/image/image_pyr.h>
 #include <visnav/patch.h>
 #include <sophus/se2.hpp>
 
@@ -603,7 +607,7 @@ void initialize_transforms(
 bool trackPointAtLevel(const visnav::Image<const uint8_t>& img_2,
                        const PatchT& dp, Eigen::AffineCompact2f& transform) {
   bool patch_valid = true;
-  int max_iterations = 20;
+  int max_iterations = 100;
 
   for (int iteration = 0; patch_valid && iteration < max_iterations;
        iteration++) {
@@ -664,10 +668,9 @@ bool trackPoint(const visnav::ManagedImagePyr<uint8_t>& old_pyr,
 void find_motion_consec(
     const KeypointsData& kd, const visnav::ManagedImagePyr<uint8_t>& old_pyr,
     const visnav::ManagedImagePyr<uint8_t>& pyr, const size_t& num_levels,
+    const double& distance_threshold,
     std::unordered_map<FeatureId, Eigen::AffineCompact2f>& transforms,
     bool prop, std::unordered_map<FeatureId, TrackId>& prop_tracks) {
-  float optical_flow_max_recovered_dist2 = 0.04;
-
   for (size_t i = 0; i < kd.corners.size(); i++) {
     // const Eigen::Vector2d p2d = kd.corners[i];
     Eigen::AffineCompact2f transform_1 = transforms[i];
@@ -699,7 +702,7 @@ void find_motion_consec(
             (transform_1.translation() - transform_1_recovered.translation())
                 .squaredNorm();
 
-        if (dist2 < optical_flow_max_recovered_dist2) {
+        if (dist2 < distance_threshold) {
           transforms[i] = transform_2;
           flag = true;
         }
@@ -742,6 +745,24 @@ void match_optical(
     //
     prop_tracks = updated_tracks;
   }
+}
+
+void matchOpticalFlow(
+    const visnav::ManagedImage<uint8_t>& img_last,
+    const visnav::ManagedImage<uint8_t>& img_current,
+    const KeypointsData& kd_last, KeypointsData& kd_current, MatchData& md,
+    int pyramid_level, double distance_threshold,
+    std::unordered_map<FeatureId, Eigen::AffineCompact2f>& transforms,
+    bool prop, bool stereo,
+    std::unordered_map<FeatureId, TrackId>& prop_tracks) {
+  // Create Image pyramid for two image pairs
+  visnav::ManagedImagePyr<uint8_t> img_last_pyr, img_current_pyr;
+  img_last_pyr.setFromImage(img_last, pyramid_level);
+  img_current_pyr.setFromImage(img_current, pyramid_level);
+
+  find_motion_consec(kd_last, img_last_pyr, img_current_pyr, pyramid_level,
+                     distance_threshold, transforms, prop, prop_tracks);
+  match_optical(kd_current, transforms, md.matches, stereo, prop_tracks);
 }
 
 }  // namespace visnav

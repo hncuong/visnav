@@ -1,8 +1,8 @@
 #pragma once
 
 #include <Eigen/Dense>
-
-#include <visnav/image.h>
+// #include <pangolin/image/managed_image.h>
+#include <visnav/image/image.h>
 #include <visnav/patterns.h>
 
 namespace visnav {
@@ -10,11 +10,12 @@ namespace visnav {
 template <typename Scalar, typename Pattern>
 struct OpticalFlowPatch {
   static constexpr int PATTERN_SIZE = Pattern::PATTERN_SIZE;
-
+  // static constexpr int PATTERN_SIZE =
+  //     36;  // When HALF_PATCH_SIZE = 3. Otherwise needs calculation.
   typedef Eigen::Matrix<int, 2, 1> Vector2i;
 
   typedef Eigen::Matrix<Scalar, 2, 1> Vector2;
-  typedef Eigen::Matrix<Scalar, 1, 2> Vector2T;
+  typedef Eigen::Matrix<Scalar, 1, 2> Vector2T;  // Transposed
   typedef Eigen::Matrix<Scalar, 3, 1> Vector3;
   typedef Eigen::Matrix<Scalar, 3, 3> Matrix3;
   typedef Eigen::Matrix<Scalar, 4, 4> Matrix4;
@@ -35,9 +36,11 @@ struct OpticalFlowPatch {
 
   OpticalFlowPatch() { mean = 0; }
 
-  OpticalFlowPatch(const Image<const uint8_t>& img,
+  OpticalFlowPatch(const visnav::Image<const uint8_t>& img,
                    const Vector2& pos) {
+    // std::cout << "BEFORE:\n" << std::endl;
     setFromImage(img, pos);
+    // std::cout << "AFTER:\n" << std::endl;
   }
 
   void setFromImage(const visnav::Image<const uint8_t>& img,
@@ -51,7 +54,16 @@ struct OpticalFlowPatch {
 
     MatrixP2 grad;
 
-    // Originally from the method setDataJacSe2 in Basalt
+    // int ind = 0;
+    // for (int x = -HALF_PATCH_SIZE; x < HALF_PATCH_SIZE + 1; x++) {
+    //   const int y_bound = sqrt(HALF_PATCH_SIZE * HALF_PATCH_SIZE - x * x);
+    //   for (int y = -y_bound; y < y_bound + 1; y++) {
+    //     pattern2.col(ind) = Vector2(x, y);
+    //     ind++;
+    //   }
+    //   ind++;
+    // }
+    // std::cout << "1 IS THIS ABORT?" << std::endl;
     for (int i = 0; i < PATTERN_SIZE; i++) {
       Vector2 p = pos + pattern2.col(i);
       if (img.InBounds(p.x(), p.y(), 3)) {
@@ -65,16 +77,17 @@ struct OpticalFlowPatch {
         data[i] = -1;
       }
     }
-
+    // std::cout << "2 IS THIS ABORT?" << std::endl;
     mean = sum / num_valid_points;
 
-    const Scalar mean_inv = num_valid_points / sum;
+    Scalar mean_inv = num_valid_points / sum;
 
     Eigen::Matrix<Scalar, 2, 3> Jw_se2;
     Jw_se2.template topLeftCorner<2, 2>().setIdentity();
 
     MatrixP3 J_se2;
 
+    // std::cout << "3 IS THIS ABORT?" << std::endl;
     for (int i = 0; i < PATTERN_SIZE; i++) {
       if (data[i] >= 0) {
         const Scalar data_i = data[i];
@@ -92,14 +105,14 @@ struct OpticalFlowPatch {
       Jw_se2(1, 2) = pattern2(0, i);
       J_se2.row(i) = grad.row(i) * Jw_se2;
     }
-
+    // std::cout << "4 IS THIS ABORT?" << std::endl;
     Matrix3 H_se2 = J_se2.transpose() * J_se2;
     Matrix3 H_se2_inv;
     H_se2_inv.setIdentity();
     H_se2.ldlt().solveInPlace(H_se2_inv);
 
     H_se2_inv_J_se2_T = H_se2_inv * J_se2.transpose();
-
+    // std::cout << "5 IS THIS ABORT?" << std::endl;
   }
 
   inline bool residual(const visnav::Image<const uint8_t>& img,
@@ -137,16 +150,91 @@ struct OpticalFlowPatch {
     return num_residuals > PATTERN_SIZE / 2;
   }
 
-  Vector2 pos = Vector2::Zero();
-  VectorP data = VectorP::Zero();  // negative if the point is not valid
+  // Eigen::Matrix<Scalar, 3, 1> interpGrad(const visnav::Image<uint8_t>& img,
+  //                                        Scalar x, Scalar y) const {
+  //   // static_assert(std::is_floating_point_v<Scalar>,
+  //   //               "interpolation / gradient only makes sense "
+  //   //               "for floating point result type");
+
+  //   int ix = x;
+  //   int iy = y;
+
+  //   Scalar dx = x - ix;
+  //   Scalar dy = y - iy;
+
+  //   Scalar ddx = Scalar(1.0) - dx;
+  //   Scalar ddy = Scalar(1.0) - dy;
+
+  //   Eigen::Matrix<Scalar, 3, 1> res;
+
+  //   const Scalar& px0y0 = img(ix, iy);
+  //   const Scalar& px1y0 = img(ix + 1, iy);
+  //   const Scalar& px0y1 = img(ix, iy + 1);
+  //   const Scalar& px1y1 = img(ix + 1, iy + 1);
+
+  //   res[0] = ddx * ddy * px0y0 + ddx * dy * px0y1 + dx * ddy * px1y0 +
+  //            dx * dy * px1y1;
+
+  //   const Scalar& pxm1y0 = img(ix - 1, iy);
+  //   const Scalar& pxm1y1 = img(ix - 1, iy + 1);
+
+  //   Scalar res_mx = ddx * ddy * pxm1y0 + ddx * dy * pxm1y1 + dx * ddy * px0y0
+  //   +
+  //                   dx * dy * px0y1;
+
+  //   const Scalar& px2y0 = img(ix + 2, iy);
+  //   const Scalar& px2y1 = img(ix + 2, iy + 1);
+
+  //   Scalar res_px = ddx * ddy * px1y0 + ddx * dy * px1y1 + dx * ddy * px2y0 +
+  //                   dx * dy * px2y1;
+
+  //   res[1] = Scalar(0.5) * (res_px - res_mx);
+
+  //   const Scalar& px0ym1 = img(ix, iy - 1);
+  //   const Scalar& px1ym1 = img(ix + 1, iy - 1);
+
+  //   Scalar res_my = ddx * ddy * px0ym1 + ddx * dy * px0y0 + dx * ddy * px1ym1
+  //   +
+  //                   dx * dy * px1y0;
+
+  //   const Scalar& px0y2 = img(ix, iy + 2);
+  //   const Scalar& px1y2 = img(ix + 1, iy + 2);
+
+  //   Scalar res_py = ddx * ddy * px0y1 + ddx * dy * px0y2 + dx * ddy * px1y1 +
+  //                   dx * dy * px1y2;
+
+  //   res[2] = Scalar(0.5) * (res_py - res_my);
+
+  //   return res;
+  // }
+
+  // Scalar interp(const visnav::Image<uint8_t>& img, Scalar x, Scalar y) const
+  // {
+  //   // static_assert(std::is_floating_point_v<S>,
+  //   //               "interpolation / gradient only makes sense "
+  //   //               "for floating point result type");
+
+  //   int ix = x;
+  //   int iy = y;
+
+  //   Scalar dx = x - ix;
+  //   Scalar dy = y - iy;
+
+  //   Scalar ddx = Scalar(1.0) - dx;
+  //   Scalar ddy = Scalar(1.0) - dy;
+
+  //   return ddx * ddy * img(ix, iy) + ddx * dy * img(ix, iy + 1) +
+  //          dx * ddy * img(ix + 1, iy) + dx * dy * img(ix + 1, iy + 1);
+  // }
+
+  Vector2 pos;
+  VectorP data;  // negative if the point is not valid
 
   // MatrixP3 J_se2;  // total jacobian with respect to se2 warp
   // Matrix3 H_se2_inv;
   Matrix3P H_se2_inv_J_se2_T;
 
   Scalar mean;
-
-  bool valid = false;
 };
 
 template <typename Scalar, typename Pattern>

@@ -30,17 +30,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #pragma once
 
-#include <memory>
-
-#include <Eigen/Dense>
-
-#include <visnav/assert.h>
-#include <visnav/image.h>
+#include <visnav/image/image.h>
 
 namespace visnav {
-
-template <class T>
-using DefaultImageAllocator = std::allocator<T>;
 
 /// @brief Image pyramid that stores levels as mipmap
 ///
