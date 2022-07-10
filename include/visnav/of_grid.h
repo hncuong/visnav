@@ -43,12 +43,14 @@ namespace visnav {
 
 /*
  * Add new keypoints in a grids. If any cell flows dieout; Try to create new
- * flow there
+ * flow there by add new keypoints
+ * Return number of cells with new keypoints
  */
-bool add_flows_on_grids(const pangolin::ManagedImage<uint8_t>& img_raw,
-                        KeypointsData& kd, int num_features,
-                        const int& num_bin_x, const int& num_bin_y,
-                        double filled_cells_thresh) {
+size_t add_flows_on_grids(const pangolin::ManagedImage<uint8_t>& img_raw,
+                          KeypointsData& kd, int num_features,
+                          const int& num_bin_x, const int& num_bin_y,
+                          double filled_cells_thresh,
+                          size_t& last_frame_num_filled_cells) {
   const auto& width = img_raw.w;
   const auto& height = img_raw.h;
   double cell_width = (double)(width + 1) / num_bin_x;
@@ -77,15 +79,19 @@ bool add_flows_on_grids(const pangolin::ManagedImage<uint8_t>& img_raw,
   }
 
   const auto& n_fill_cells = flow_cell_exist.size();
-  std::cout << n_fill_cells << " cells filled over " << total_cells << "!\n";
+  std::cout << "\tADD FLOWS: " << n_fill_cells << " cells filled over "
+            << total_cells << " - last frame filled "
+            << last_frame_num_filled_cells << "!\n";
 
-  if (n_fill_cells >= total_cells * filled_cells_thresh) {
-    return false;
-  } else {
-    size_t num_keypoints_added = 0;
+  // Try to add flows on cells
+  // If this frame has less fill cells than previous
+  std::set<std::pair<int, int>> flow_cell_added;
+  size_t num_keypoints_added = 0;
+
+  if (n_fill_cells < last_frame_num_filled_cells) {
     KeypointsData new_kd;
     detectKeypoints(img_raw, new_kd, num_features);
-    std::cout << "Detected " << new_kd.corners.size() << " kp!\n";
+    std::cout << "\tADD FLOWS: Detected " << new_kd.corners.size() << " kp!\n";
 
     // Add only for empty regions
     for (const auto& kp : new_kd.corners) {
@@ -99,22 +105,23 @@ bool add_flows_on_grids(const pangolin::ManagedImage<uint8_t>& img_raw,
       int bin_x = (int)(kpx / cell_width);
       int bin_y = (int)(kpy / cell_height);
 
+      // Add to result
+      flow_cell_added.emplace(bin_x, bin_y);
       if (flow_cell_exist.count(std::make_pair(bin_x, bin_y)) == 0) {
         kd.corners.emplace_back(kp.x(), kp.y());
+        //        flow_cell_added.emplace(bin_x, bin_y);
         num_keypoints_added++;
       }
     }
 
-    //     Check num addes
-    if (num_keypoints_added == 0) {
-      std::cout << "ADD FLOWS: Failed to add new keypoints\n";
-      return false;
-    } else {
-      std::cout << "ADD FLOWS: Added " << num_keypoints_added
-                << " new keypoints\n";
-      return true;
-    }
+    // Check num addes
+    // And record num filled
+    std::cout << "\tADD FLOWS: Added " << num_keypoints_added
+              << " new keypoints over " << kd.corners.size() << " total kps in "
+              << flow_cell_added.size() << " cells!\n";
+    last_frame_num_filled_cells = flow_cell_added.size();
   }
+  return num_keypoints_added;
 }
 
 /*

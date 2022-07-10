@@ -177,7 +177,8 @@ std::unordered_map<TrackId, Eigen::Vector3f> flows_to_show;
 /// For generating random colors
 cv::RNG rng;
 /// Forward-backward back project distance threshold for optical flows
-double backproject_distance_threshold = 0.1;
+/// Square norm
+double backproject_distance_threshold2 = 0.04;
 
 /// Image Pyramid for leftframe, rightframe, nextframe
 visnav::ManagedImagePyr<uint8_t> left_pyr, right_pyr, next_pyr, imgl_last_pyr;
@@ -187,6 +188,18 @@ std::unordered_map<FeatureId, TrackId> propagate_tracks;
 
 /// Last match feature to Track
 LandmarkMatchData last_md_featureToTrack;
+
+/// Pyramid level
+int pyramid_level = 3;
+
+/// Cells to store keypoints
+int num_bin_x = 5;
+int num_bin_y = 5;
+size_t last_frame_num_filled_cells = 25;
+
+/// Num keypoints added to get new keyframes
+int new_kf_num_new_keypoints = 80;
+int new_kps = 0;
 
 ///////////////////////////////////////////////////////////////////////////////
 /// GUI parameters
@@ -223,8 +236,6 @@ pangolin::Var<bool> show_old_points3d("hidden.show_old_points3d", true, true);
 pangolin::Var<bool> show_flows("ui.show_flows", true, true);
 pangolin::Var<int> num_flows_to_draw("hidden.num_flows_to_draw", 500, 1, 1000);
 pangolin::Var<int> max_track_length("hidden.max_track_length", 20, 10, 200);
-pangolin::Var<int> num_bin_x("hidden.num_bin_x", 4, 1, 20);
-pangolin::Var<int> num_bin_y("hidden.num_bin_y", 4, 1, 20);
 pangolin::Var<double> line_width("hidden.line_width", 2.0, 1.0, 3.0);
 
 //////////////////////////////////////////////
@@ -290,8 +301,9 @@ int main(int argc, char** argv) {
 
   /// OF Start frame for debugging
   int start_frame_idx = 0;
-  double backproject_distance_threshold_in_pixels = 0.1;
+  double backproject_distance_threshold_in_pixels = 0.2;
   int kf_frequency = 20;
+  int df_pyramid_lv = 3;
 
   CLI::App app{"Visual odometry."};
 
@@ -301,7 +313,7 @@ int main(int argc, char** argv) {
   app.add_option("--cam-calib", cam_calib,
                  "Path to camera calibration. Default: " + cam_calib);
 
-  // OF options
+  /// OF Odometry options
   app.add_option(
       "--start-frame", start_frame_idx,
       "Start frame index. Default: " + std::to_string(start_frame_idx));
@@ -312,6 +324,15 @@ int main(int argc, char** argv) {
   app.add_option("--kf_frequency", kf_frequency,
                  "Number of max consecutive regular frames: " +
                      std::to_string(kf_frequency));
+  app.add_option("--pyramid-lv", df_pyramid_lv,
+                 "Number of pyramid lv " + std::to_string(df_pyramid_lv));
+  app.add_option("--nbin-x", num_bin_x,
+                 "Number bins on x axis " + std::to_string(num_bin_x));
+  app.add_option("--nbin-y", num_bin_y,
+                 "Number bins on x axis " + std::to_string(num_bin_y));
+  app.add_option("--new-kps-kf", new_kf_num_new_keypoints,
+                 "Number of accum new kps to take new kf " +
+                     std::to_string(new_kf_num_new_keypoints));
 
   try {
     app.parse(argc, argv);
@@ -321,11 +342,18 @@ int main(int argc, char** argv) {
 
   load_data(dataset_path, cam_calib);
   current_frame = start_frame_idx;
-  backproject_distance_threshold = backproject_distance_threshold_in_pixels;
+  backproject_distance_threshold2 = backproject_distance_threshold_in_pixels *
+                                    backproject_distance_threshold_in_pixels;
   max_consecutive_regular_frames = kf_frequency;
+  pyramid_level = df_pyramid_lv;
+  last_frame_num_filled_cells = num_bin_x * num_bin_y;
   std::cout << "START with frame " << current_frame
-            << " and backproject threshold " << backproject_distance_threshold
-            << " and KF frequency " << max_consecutive_regular_frames << "\n";
+            << " and backproject threshold " << backproject_distance_threshold2
+            << " and KF frequency " << max_consecutive_regular_frames
+            << " and pyramid lv " << pyramid_level << " and num bins x, y "
+            << num_bin_x << " " << num_bin_y << " last frame filled "
+            << last_frame_num_filled_cells << " - new kf accumulate new kps "
+            << new_kf_num_new_keypoints << "\n";
 
   if (show_gui) {
     pangolin::CreateWindowAndBind("Main", 1800, 1000);
@@ -1070,7 +1098,7 @@ bool next_step() {
 
   pangolin::ManagedImage<uint8_t> imgl = pangolin::LoadImage(images[fcidl]);
   pangolin::ManagedImage<uint8_t> imgr = pangolin::LoadImage(images[fcidr]);
-  std::cout << "NEXT STEP: Processing " << fcidl << "\n";
+  std::cout << "\nPROCESSING " << fcidl << "\n";
 
   // convert pangolin::ManagedImage --> visnav::Image
   visnav::ManagedImage<uint8_t> imgl_v, imgr_v, imgl_last_v;
@@ -1083,7 +1111,7 @@ bool next_step() {
   if (current_frame > 0) {
     imgl_last_v.CopyFrom(visnav::Image<uint8_t>(imgl_last.ptr, imgl_last.w,
                                                 imgl_last.h, imgl_last.pitch));
-    imgl_last_pyr.setFromImage(imgl_last_v, PYRAMID_LEVEL);
+    imgl_last_pyr.setFromImage(imgl_last_v, pyramid_level);
   }
 
   std::vector<Eigen::Vector2d, Eigen::aligned_allocator<Eigen::Vector2d>>
@@ -1107,8 +1135,8 @@ bool next_step() {
 
     initialize_transforms(last_md_featureToTrack, kd_last, projected_points,
                           projected_track_ids, false, last_current_transforms);
-    matchOpticalFlow(imgl_last_v, imgl_v, kd_last, kdl, md_last, PYRAMID_LEVEL,
-                     0.04, last_current_transforms);
+    matchOpticalFlow(imgl_last_v, imgl_v, kd_last, kdl, md_last, pyramid_level,
+                     backproject_distance_threshold2, last_current_transforms);
   }
 
   // Add to all flows for visualization
@@ -1118,12 +1146,22 @@ bool next_step() {
   /// If number of empty cells cross a threshold * total_cells
   /// Then try to create new flows in empty cells
   double empty_cells_thresh = 0.99;
-  add_flows_on_grids(imgl, kdl, num_features_per_image, num_bin_x, num_bin_y,
-                     empty_cells_thresh);
+  size_t new_kps_added = add_flows_on_grids(
+      imgl, kdl, num_features_per_image, num_bin_x, num_bin_y,
+      empty_cells_thresh, last_frame_num_filled_cells);
+
+  new_kps += new_kps_added;
+  if (new_kps >= new_kf_num_new_keypoints) {
+    std::cout << "\tAccumulate " << new_kps
+              << " new keypoints. Take keyframe.\n";
+    take_keyframe = true;
+  }
 
   if (take_keyframe) {
+    // Reset some counter
     num_consecutive_regular_frames = 0;
     take_keyframe = false;
+    new_kps = 0;
 
     // Optical Flow to find keypoints and stereo matches to right image
     //    optical_flows(imgl, imgr, kdl, kdr, md_stereo,
@@ -1138,8 +1176,8 @@ bool next_step() {
     std::unordered_map<FeatureId, Eigen::AffineCompact2f> l_r_transforms;
     initialize_transforms(md, kdl, projected_points, projected_track_ids, true,
                           l_r_transforms);
-    matchOpticalFlow(imgl_v, imgr_v, kdl, kdr, md_stereo, PYRAMID_LEVEL,
-                     backproject_distance_threshold, l_r_transforms);
+    matchOpticalFlow(imgl_v, imgr_v, kdl, kdr, md_stereo, pyramid_level,
+                     backproject_distance_threshold2, l_r_transforms);
 
     findInliersEssential(kdl, kdr, calib_cam.intrinsics[0],
                          calib_cam.intrinsics[1], E, 1e-3, md_stereo);
@@ -1159,7 +1197,6 @@ bool next_step() {
     // CHange to optical flow version
     // Update find match landmark for Optical flow; landmark that does not
     // have obs last frame
-    // Try to merge flows and landmarks
     find_matches_landmarks_with_otpical_flow(fcid_last, md_last, flows, md);
 
     std::cout << "KF Found " << md.matches.size() << " matches." << std::endl;
@@ -1245,22 +1282,6 @@ bool next_step() {
                 << "Take new keyframe next step!\n";
       take_keyframe = true;
     }
-
-    // TODO Use Grid to check.
-    // Add keyframe if flows not cover some part of images
-    // Like threshold over cell
-    // FIXME many cases can not add flows make keyframes too close together
-    //    double empty_cells_thresh_take_keyframe = 0.2;
-    //    double empty_cell_ratio =
-    //        check_flows_empty_cells(fcidl, kdl, flows, imgl, num_bin_x,
-    //        num_bin_y);
-    //    if (empty_cell_ratio >= empty_cells_thresh_take_keyframe) {
-    //      std::cout << "Empty cell ratio " << empty_cell_ratio
-    //                << " higher than thresh" <<
-    //                empty_cells_thresh_take_keyframe
-    //                << "Take new keyframe next step!\n";
-    //      take_keyframe = true;
-    //    }
 
     //    if (!opt_running && opt_finished) {
     //      //      opt_thread->join();

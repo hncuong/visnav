@@ -39,6 +39,7 @@
 #include <sophus/se2.hpp>
 
 const int PYRAMID_LEVEL = 3;
+const int OF_TRACK_MAX_ITERATIONS = 20;
 
 namespace visnav {
 // Define type for OpticalFlow patch template
@@ -610,7 +611,7 @@ void initialize_transforms(
 bool trackPointAtLevel(const visnav::Image<const uint8_t>& img_2,
                        const PatchT& dp, Eigen::AffineCompact2f& transform) {
   bool patch_valid = true;
-  int max_iterations = 100;
+  int max_iterations = OF_TRACK_MAX_ITERATIONS;
 
   for (int iteration = 0; patch_valid && iteration < max_iterations;
        iteration++) {
