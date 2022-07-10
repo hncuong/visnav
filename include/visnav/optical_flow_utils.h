@@ -582,14 +582,17 @@ void initialize_transforms(
                       Eigen::aligned_allocator<Eigen::Vector2d>>&
         projected_points,
     const std::vector<TrackId>& projected_track_ids, const bool stereo_init,
-    std::unordered_map<FeatureId, Eigen::AffineCompact2f>& transforms,
-    std::unordered_map<FeatureId, TrackId>& prop_tracks) {
+    std::unordered_map<FeatureId, Eigen::AffineCompact2f>& transforms) {
+  // Init transformation to track
   for (size_t i = 0; i < kdl.corners.size(); i++) {
-    transforms[i].setIdentity();
-    transforms[i].translation() = kdl.corners[i].cast<float>();
+    Eigen::AffineCompact2f tf;
+    tf.setIdentity();
+    tf.translation() = kdl.corners[i].cast<float>();
+    transforms.emplace(i, tf);
   }
 
-  // Initilize transforms in case of stereo matching
+  // Initilize transforms in case of non stereo matching
+  // TODO Maybe discard this to test
   if (!stereo_init) {
     for (const auto& match : md.inliers) {
       FeatureId fid = match.first;
@@ -597,7 +600,7 @@ void initialize_transforms(
 
       for (size_t t = 0; t < projected_track_ids.size(); t++) {
         if (projected_track_ids[t] == tid) {
-          transforms[fid].translation() = projected_points[t].cast<float>();
+          transforms.at(fid).translation() = projected_points[t].cast<float>();
         }
       }
     }
@@ -669,8 +672,7 @@ void find_motion_consec(
     const KeypointsData& kd, const visnav::ManagedImagePyr<uint8_t>& old_pyr,
     const visnav::ManagedImagePyr<uint8_t>& pyr, const size_t& num_levels,
     const double& distance_threshold,
-    std::unordered_map<FeatureId, Eigen::AffineCompact2f>& transforms,
-    bool prop, std::unordered_map<FeatureId, TrackId>& prop_tracks) {
+    std::unordered_map<FeatureId, Eigen::AffineCompact2f>& transforms) {
   for (size_t i = 0; i < kd.corners.size(); i++) {
     // const Eigen::Vector2d p2d = kd.corners[i];
     Eigen::AffineCompact2f transform_1 = transforms[i];
@@ -708,18 +710,24 @@ void find_motion_consec(
         }
       }
     }
+
+    // Delete transform not under threshol
     if (!flag) {
       transforms.erase(i);
-      if (prop) prop_tracks.erase(i);
     }
   }
 }
 
+/**
+ * @brief match_optical: Fill keypoints and matches with transform
+ * @param kdr keypoints in target frame to be filled
+ * @param transforms 2D affine transforms
+ * @param matches matches from source to target frame
+ */
 void match_optical(
     KeypointsData& kdr,
     const std::unordered_map<FeatureId, Eigen::AffineCompact2f>& transforms,
-    std::vector<std::pair<int, int>>& matches, bool stereo,
-    std::unordered_map<FeatureId, TrackId>& prop_tracks) {
+    std::vector<std::pair<int, int>>& matches) {
   kdr.corners.clear();
   matches.clear();
   int i = 0;
@@ -728,41 +736,74 @@ void match_optical(
   for (const auto& t : transforms) {
     // std::cout << "SEG FAULT?" << std::endl;
     // if(t.second.data)
-    if (stereo) {
-      kdr.corners.push_back(t.second.translation().cast<double>());
-    } else {
-      if (prop_tracks.find(t.first) != prop_tracks.end()) {
-        kdr.corners.push_back(t.second.translation().cast<double>());
-        updated_tracks.insert(std::make_pair(j, prop_tracks[t.first]));
-        j++;
-      }
-    }
-
+    kdr.corners.push_back(t.second.translation().cast<double>());
     matches.emplace_back(t.first, i);
     i++;
   }
-  if (!stereo) {
-    //
-    prop_tracks = updated_tracks;
-  }
 }
 
+/**
+ * @brief matchOpticalFlow: Use Optical flows to find matches and keypoints in
+ * target frame from a source frame
+ * @param img_last
+ * @param img_current
+ * @param kd_last
+ * @param kd_current
+ * @param md
+ * @param pyramid_level
+ * @param distance_threshold
+ * @param transforms
+ */
 void matchOpticalFlow(
     const visnav::ManagedImage<uint8_t>& img_last,
     const visnav::ManagedImage<uint8_t>& img_current,
     const KeypointsData& kd_last, KeypointsData& kd_current, MatchData& md,
     int pyramid_level, double distance_threshold,
-    std::unordered_map<FeatureId, Eigen::AffineCompact2f>& transforms,
-    bool prop, bool stereo,
-    std::unordered_map<FeatureId, TrackId>& prop_tracks) {
+    std::unordered_map<FeatureId, Eigen::AffineCompact2f>& transforms) {
   // Create Image pyramid for two image pairs
   visnav::ManagedImagePyr<uint8_t> img_last_pyr, img_current_pyr;
   img_last_pyr.setFromImage(img_last, pyramid_level);
   img_current_pyr.setFromImage(img_current, pyramid_level);
 
+  // Calculate transformation
   find_motion_consec(kd_last, img_last_pyr, img_current_pyr, pyramid_level,
-                     distance_threshold, transforms, prop, prop_tracks);
-  match_optical(kd_current, transforms, md.matches, stereo, prop_tracks);
+                     distance_threshold, transforms);
+
+  // Fill keypoints in target frame and maches
+  match_optical(kd_current, transforms, md.matches);
+}
+
+void project_landmarks_of(
+    const Sophus::SE3d& current_pose,
+    const std::shared_ptr<AbstractCamera<double>>& cam, const Flows& landmarks,
+    const double cam_z_threshold,
+    std::vector<Eigen::Vector2d, Eigen::aligned_allocator<Eigen::Vector2d>>&
+        projected_points,
+    std::vector<TrackId>& projected_track_ids) {
+  projected_points.clear();
+  projected_track_ids.clear();
+
+  // TODO SHEET 5: project landmarks to the image plane using the current
+  // locations of the cameras. Put 2d coordinates of the projected points into
+  // projected_points and the corresponding id of the landmark into
+  // projected_track_ids.
+  for (const auto& kv : landmarks) {
+    TrackId trackId = kv.first;
+    const auto& p_3w = kv.second.p;
+
+    // Project to camera
+    auto p_3c = current_pose.inverse() * p_3w;
+    // Only take landmark infront of camera
+    if (p_3c.z() >= cam_z_threshold) {
+      auto p_2c = cam->project(p_3c);
+      // CHeck if it inside the image
+      if (p_2c.x() >= 0. && p_2c.x() <= cam->width() - 1. && p_2c.y() >= 0. &&
+          p_2c.y() <= cam->height() - 1.) {
+        projected_points.emplace_back(p_2c);
+        projected_track_ids.emplace_back(trackId);
+      }
+    }
+  }
 }
 
 }  // namespace visnav

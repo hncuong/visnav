@@ -185,6 +185,9 @@ visnav::ManagedImagePyr<uint8_t> left_pyr, right_pyr, next_pyr, imgl_last_pyr;
 /// Map storing FeatureID and its corresponding TrackID
 std::unordered_map<FeatureId, TrackId> propagate_tracks;
 
+/// Last match feature to Track
+LandmarkMatchData last_md_featureToTrack;
+
 ///////////////////////////////////////////////////////////////////////////////
 /// GUI parameters
 ///////////////////////////////////////////////////////////////////////////////
@@ -220,11 +223,8 @@ pangolin::Var<bool> show_old_points3d("hidden.show_old_points3d", true, true);
 pangolin::Var<bool> show_flows("ui.show_flows", true, true);
 pangolin::Var<int> num_flows_to_draw("hidden.num_flows_to_draw", 500, 1, 1000);
 pangolin::Var<int> max_track_length("hidden.max_track_length", 20, 10, 200);
-pangolin::Var<int> num_bin_x("hidden.num_bin_x", 10, 1, 20);
-pangolin::Var<int> num_bin_y("hidden.num_bin_y", 10, 1, 20);
-// pangolin::Var<double> backproject_distance_threshold(
-//     "hidden.backproject_distance_thresh", 0.25, 0.01, 10);
-//  pangolin::Var<int> start_frame("hidden.start_frame", 0, 0, 2700);
+pangolin::Var<int> num_bin_x("hidden.num_bin_x", 4, 1, 20);
+pangolin::Var<int> num_bin_y("hidden.num_bin_y", 4, 1, 20);
 pangolin::Var<double> line_width("hidden.line_width", 2.0, 1.0, 3.0);
 
 //////////////////////////////////////////////
@@ -1090,39 +1090,21 @@ bool next_step() {
   // 1st: Flow from last frame to current frame
   MatchData md_last;
 
-  //  optical_flows(imgl_last, imgl, kd_last, kdl, md_last,
-  //                backproject_distance_threshold);
-
   /// Do Optical Flow here
   if (current_frame > 0) {
     std::unordered_map<FeatureId, Eigen::AffineCompact2f>
         last_current_transforms;
-    initialize_transforms(md, kd_last, projected_points, projected_track_ids,
-                          false, last_current_transforms, propagate_tracks);
+    project_landmarks_of(current_pose, calib_cam.intrinsics[0], flows,
+                         cam_z_threshold, projected_points,
+                         projected_track_ids);
+
+    initialize_transforms(last_md_featureToTrack, kd_last, projected_points,
+                          projected_track_ids, false, last_current_transforms);
     matchOpticalFlow(imgl_last_v, imgl_v, kd_last, kdl, md_last, PYRAMID_LEVEL,
-                     backproject_distance_threshold, last_current_transforms,
-                     true, false, propagate_tracks);
+                     0.04, last_current_transforms);
   }
 
-  //  if (current_frame > 0) {
-  //    std::unordered_map<FeatureId, Eigen::AffineCompact2f>
-  //    i_j_transforms; initialize_transforms(md, kd_last, projected_points,
-  //    projected_track_ids,
-  //                          false, i_j_transforms, propagate_tracks);
-  //    find_motion_consec(kd_last, imgl_last_pyr, imgl_pyr, PYRAMID_LEVEL,
-  //                       backproject_distance_threshold, i_j_transforms,
-  //                       true, propagate_tracks);
-
-  //    match_optical(kdl, i_j_transforms, md_last.matches, false,
-  //                  propagate_tracks);
-
-  //    //    for (auto el : propagate_tracks) {
-  //    //      md_last.matches.push_back(el);
-  //    //    }
-  //  }
-
-  // TODO Add to all flows
-  // Contains all flows
+  // Add to all flows for visualization
   update_and_add_flows(fcid_last, md_last, all_flows, next_flow_id);
 
   /// Examine to add new flows by grids
@@ -1148,10 +1130,9 @@ bool next_step() {
     /// Do Optical Flow here
     std::unordered_map<FeatureId, Eigen::AffineCompact2f> l_r_transforms;
     initialize_transforms(md, kdl, projected_points, projected_track_ids, true,
-                          l_r_transforms, propagate_tracks);
+                          l_r_transforms);
     matchOpticalFlow(imgl_v, imgr_v, kdl, kdr, md_stereo, PYRAMID_LEVEL,
-                     backproject_distance_threshold, l_r_transforms, true, true,
-                     propagate_tracks);
+                     backproject_distance_threshold, l_r_transforms);
 
     findInliersEssential(kdl, kdr, calib_cam.intrinsics[0],
                          calib_cam.intrinsics[1], E, 1e-3, md_stereo);
@@ -1187,6 +1168,9 @@ bool next_step() {
     // TODO CHange to optical flow version
     add_new_landmarks_optical_flow(fcidl, fcidr, kdl, kdr, calib_cam, md_stereo,
                                    md, flows, next_landmark_id);
+    // Update match for next round
+    last_md_featureToTrack = md;
+
     // TODO CHange to optical flow version
     remove_old_keyframes_optical_flow(fcidl, max_num_kfs, cameras, all_cameras,
                                       flows, old_landmarks, kf_frames);
@@ -1237,6 +1221,9 @@ bool next_step() {
     localize_camera_optical_flow(
         current_pose, calib_cam.intrinsics[0], kdl, flows,
         reprojection_error_pnp_inlier_threshold_pixel, md);
+
+    // Update match for next round
+    last_md_featureToTrack = md;
 
     current_pose = md.T_w_c;
     Camera current_cam;
