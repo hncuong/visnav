@@ -270,12 +270,12 @@ void matchOpticalFlow(const visnav::ManagedImage<uint8_t>& img_src,
 void optical_flows(const pangolin::ManagedImage<uint8_t>& img_src,
                    const pangolin::ManagedImage<uint8_t>& img_dest,
                    const KeypointsData& kd_src, KeypointsData& kd_dest,
-                   MatchData& md, double distance_threshold, int pyramid_level,
-                   bool run_basalt) {
+                   MatchData& md, const int& pyramid_level,
+                   const double& distance_threshold, const bool& run_basalt) {
   if (!run_basalt) {
     // Run Lucas-Kanade method
-    optical_flows_opencv(img_src, img_dest, kd_src, kd_dest, md,
-                         distance_threshold, pyramid_level);
+    optical_flows_opencv(img_src, img_dest, kd_src, kd_dest, md, pyramid_level,
+                         distance_threshold);
   } else {
     // Run Basalt method of Usenko
     // Covert to Basalt Image

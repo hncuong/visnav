@@ -193,6 +193,8 @@ LandmarkMatchData last_md_featureToTrack;
 /// Pyramid level
 int pyramid_level = 3;
 int stereo_pyramid_level = 3;
+bool use_basalt_forward = true;
+bool use_basalt_stereo = true;
 
 /// Cells to store keypoints
 int num_bin_x = 5;
@@ -349,6 +351,9 @@ int main(int argc, char** argv) {
   app.add_option("--new-kps-kf", new_kf_num_new_keypoints,
                  "Number of accum new kps to take new kf " +
                      std::to_string(new_kf_num_new_keypoints));
+  // Use Basalt or Lucas for OF
+  app.add_option("--use-bs-fw", use_basalt_forward, "use_basalt_forward");
+  app.add_option("--use-bs-st", use_basalt_stereo, "use_basalt_stereo");
 
   try {
     app.parse(argc, argv);
@@ -1131,13 +1136,8 @@ bool next_step() {
   visnav::ManagedImage<uint8_t> imgl_v, imgr_v, imgl_last_v;
   //  visnav::ManagedImagePyr<uint8_t> imgl_pyr, imgr_pyr, imgl_last_pyr;
 
-  imgl_v.CopyFrom(visnav::Image<uint8_t>(imgl.ptr, imgl.w, imgl.h, imgl.pitch));
-
-  if (current_frame > 0) {
-    imgl_last_v.CopyFrom(visnav::Image<uint8_t>(imgl_last.ptr, imgl_last.w,
-                                                imgl_last.h, imgl_last.pitch));
-    //    imgl_last_pyr.setFromImage(imgl_last_v, pyramid_level);
-  }
+  //  imgl_v.CopyFrom(visnav::Image<uint8_t>(imgl.ptr, imgl.w, imgl.h,
+  //  imgl.pitch));
 
   // Checkpoint 1
   auto ckp1 = std::chrono::high_resolution_clock::now();
@@ -1154,8 +1154,12 @@ bool next_step() {
 
   /// Do Optical Flow here
   if (current_frame > 0) {
-    matchOpticalFlow(imgl_last_v, imgl_v, kd_last, kdl, md_last, pyramid_level,
-                     backproject_distance_threshold2);
+    //    imgl_last_v.CopyFrom(visnav::Image<uint8_t>(imgl_last.ptr,
+    //    imgl_last.w,
+    //                                                imgl_last.h,
+    //                                                imgl_last.pitch));
+    optical_flows(imgl_last, imgl, kd_last, kdl, md_last, pyramid_level,
+                  backproject_distance_threshold2, use_basalt_forward);
   }
 
   auto ckp2 = std::chrono::high_resolution_clock::now();
@@ -1200,18 +1204,13 @@ bool next_step() {
     new_kps = 0;
 
     pangolin::ManagedImage<uint8_t> imgr = pangolin::LoadImage(images[fcidr]);
-    imgr_v.CopyFrom(
-        visnav::Image<uint8_t>(imgr.ptr, imgr.w, imgr.h, imgr.pitch));
-
-    // Optical Flow to find keypoints and stereo matches to right image
-    //    optical_flows(imgl, imgr, kdl, kdr, md_stereo,
-    //                  backproject_distance_threshold);
 
     md_stereo.T_i_j = T_0_1;
 
     /// Do Optical Flow here
-    matchOpticalFlow(imgl_v, imgr_v, kdl, kdr, md_stereo, stereo_pyramid_level,
-                     backproject_distance_threshold2);
+    // Optical Flow to find keypoints and stereo matches to right image
+    optical_flows(imgl, imgr, kdl, kdr, md_stereo, stereo_pyramid_level,
+                  backproject_distance_threshold2, use_basalt_stereo);
 
     auto ckp4 = std::chrono::high_resolution_clock::now();
     double t4 =

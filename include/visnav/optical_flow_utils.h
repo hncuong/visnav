@@ -68,8 +68,8 @@ namespace visnav {
 void optical_flows_opencv(const pangolin::ManagedImage<uint8_t>& img_src,
                           const pangolin::ManagedImage<uint8_t>& img_dest,
                           const KeypointsData& kd_src, KeypointsData& kd_dest,
-                          MatchData& md, double distance_threshold,
-                          int pyramid_level) {
+                          MatchData& md, int pyramid_level,
+                          double distance_threshold) {
   // If last frame have empty corner
   if (kd_src.corners.size() == 0) return;
 

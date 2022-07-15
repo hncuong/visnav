@@ -1127,8 +1127,8 @@ bool next_step() {
 
   /// Do Optical Flow here
   if (current_frame > 0) {
-    optical_flows_opencv(imgl_last, imgl, kd_last, kdl, md_last,
-                         backproject_distance_threshold2, pyramid_level);
+    optical_flows_opencv(imgl_last, imgl, kd_last, kdl, md_last, pyramid_level,
+                         backproject_distance_threshold2);
   }
 
   auto ckp2 = std::chrono::high_resolution_clock::now();
@@ -1175,8 +1175,8 @@ bool next_step() {
     pangolin::ManagedImage<uint8_t> imgr = pangolin::LoadImage(images[fcidr]);
 
     // Optical Flow to find keypoints and stereo matches to right image
-    optical_flows_opencv(imgl, imgr, kdl, kdr, md_stereo,
-                         backproject_distance_threshold2, pyramid_level);
+    optical_flows_opencv(imgl, imgr, kdl, kdr, md_stereo, pyramid_level,
+                         backproject_distance_threshold2);
 
     md_stereo.T_i_j = T_0_1;
 
