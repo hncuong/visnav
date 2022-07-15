@@ -88,7 +88,9 @@ size_t add_flows_on_grids(const pangolin::ManagedImage<uint8_t>& img_raw,
   std::set<std::pair<int, int>> flow_cell_added;
   size_t num_keypoints_added = 0;
 
-  if (n_fill_cells < last_frame_num_filled_cells) {
+  // TODO Update the condition all total_cells
+  //  if (n_fill_cells < last_frame_num_filled_cells) {
+  if (n_fill_cells < total_cells) {
     KeypointsData new_kd;
     detectKeypoints(img_raw, new_kd, num_features);
     std::cout << "\tADD FLOWS: Detected " << new_kd.corners.size() << " kp!\n";

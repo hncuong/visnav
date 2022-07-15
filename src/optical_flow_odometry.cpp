@@ -201,6 +201,14 @@ size_t last_frame_num_filled_cells = 25;
 int new_kf_num_new_keypoints = 80;
 int new_kps = 0;
 
+/// TIME Measurements
+double total_t1 = 0.;
+double total_t2 = 0.;
+double total_t3 = 0.;
+double total_t4 = 0.;
+double total_t5 = 0.;
+double total_t6 = 0.;
+
 ///////////////////////////////////////////////////////////////////////////////
 /// GUI parameters
 ///////////////////////////////////////////////////////////////////////////////
@@ -485,6 +493,11 @@ int main(int argc, char** argv) {
     }
   }
 
+  /// Print time measure
+  std::cout << "\nTIME MEASUREMENTS: " << total_t1 << " " << total_t2 << " "
+            << total_t3 << " " << total_t4 << " " << total_t5 << " " << total_t6
+            << " \n";
+
   /// Save cemeras trajectory for evaluation
   save_trajectory();
   save_all_trajectory();
@@ -570,8 +583,8 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
       mean_flow_length = total_flows_length / aliveFlows.size();
 
     pangolin::GlFont::I()
-        .Text("Current frame has %d flows, avg length %d", aliveFlows.size(),
-              mean_flow_length)
+        .Text("Current frame has %d flows, avg length %d, %d landmarks",
+              aliveFlows.size(), mean_flow_length, flows.size())
         .Draw(5, text_row);
     text_row += 20;
 
@@ -1088,6 +1101,7 @@ void load_data(const std::string& dataset_path, const std::string& calib_path) {
 // Execute next step in the overall odometry pipeline. Call this repeatedly
 // until it returns false for automatic execution.
 bool next_step() {
+  auto start = std::chrono::high_resolution_clock::now();
   if (current_frame >= int(images.size()) / NUM_CAMS) return false;
 
   const Sophus::SE3d T_0_1 = calib_cam.T_i_c[0].inverse() * calib_cam.T_i_c[1];
@@ -1097,7 +1111,6 @@ bool next_step() {
   KeypointsData kdl;
 
   pangolin::ManagedImage<uint8_t> imgl = pangolin::LoadImage(images[fcidl]);
-  pangolin::ManagedImage<uint8_t> imgr = pangolin::LoadImage(images[fcidr]);
   std::cout << "\nPROCESSING " << fcidl << "\n";
 
   // convert pangolin::ManagedImage --> visnav::Image
@@ -1106,17 +1119,11 @@ bool next_step() {
 
   imgl_v.CopyFrom(visnav::Image<uint8_t>(imgl.ptr, imgl.w, imgl.h, imgl.pitch));
 
-  imgr_v.CopyFrom(visnav::Image<uint8_t>(imgr.ptr, imgr.w, imgr.h, imgr.pitch));
-
   if (current_frame > 0) {
     imgl_last_v.CopyFrom(visnav::Image<uint8_t>(imgl_last.ptr, imgl_last.w,
                                                 imgl_last.h, imgl_last.pitch));
     imgl_last_pyr.setFromImage(imgl_last_v, pyramid_level);
   }
-
-  std::vector<Eigen::Vector2d, Eigen::aligned_allocator<Eigen::Vector2d>>
-      projected_points;
-  std::vector<TrackId> projected_track_ids;
 
   MatchData md_stereo;
   LandmarkMatchData md;
@@ -1124,44 +1131,60 @@ bool next_step() {
 
   // 1st: Flow from last frame to current frame
   MatchData md_last;
+  auto ckp1 = std::chrono::high_resolution_clock::now();
+  double t1 = std::chrono::duration_cast<std::chrono::nanoseconds>(ckp1 - start)
+                  .count();
+  total_t1 += t1 / 1e9;
 
   /// Do Optical Flow here
   if (current_frame > 0) {
-    std::unordered_map<FeatureId, Eigen::AffineCompact2f>
-        last_current_transforms;
-    project_landmarks_of(current_pose, calib_cam.intrinsics[0], flows,
-                         cam_z_threshold, projected_points,
-                         projected_track_ids);
-
-    initialize_transforms(last_md_featureToTrack, kd_last, projected_points,
-                          projected_track_ids, false, last_current_transforms);
     matchOpticalFlow(imgl_last_v, imgl_v, kd_last, kdl, md_last, pyramid_level,
-                     backproject_distance_threshold2, last_current_transforms);
+                     backproject_distance_threshold2);
   }
 
+  auto ckp2 = std::chrono::high_resolution_clock::now();
+  double t2 =
+      std::chrono::duration_cast<std::chrono::nanoseconds>(ckp2 - ckp1).count();
+  total_t2 += t2 / 1e9;
+
   // Add to all flows for visualization
-  update_and_add_flows(fcid_last, md_last, all_flows, next_flow_id);
+  //  update_and_add_flows(fcid_last, md_last, all_flows, next_flow_id);
 
   /// Examine to add new flows by grids
   /// If number of empty cells cross a threshold * total_cells
   /// Then try to create new flows in empty cells
   double empty_cells_thresh = 0.99;
-  size_t new_kps_added = add_flows_on_grids(
-      imgl, kdl, num_features_per_image, num_bin_x, num_bin_y,
-      empty_cells_thresh, last_frame_num_filled_cells);
+  //  size_t new_kps_added = add_flows_on_grids(
+  //      imgl, kdl, num_features_per_image, num_bin_x, num_bin_y,
+  //      empty_cells_thresh, last_frame_num_filled_cells);
 
-  new_kps += new_kps_added;
-  if (new_kps >= new_kf_num_new_keypoints) {
-    std::cout << "\tAccumulate " << new_kps
-              << " new keypoints. Take keyframe.\n";
-    take_keyframe = true;
-  }
+  //  new_kps += new_kps_added;
+  //  if (new_kps >= new_kf_num_new_keypoints) {
+  //    std::cout << "\tAccumulate " << new_kps
+  //              << " new keypoints. Take keyframe.\n";
+  //    take_keyframe = true;
+  //  }
+
+  auto ckp3 = std::chrono::high_resolution_clock::now();
+  double t3 =
+      std::chrono::duration_cast<std::chrono::nanoseconds>(ckp3 - ckp2).count();
+  total_t3 += t3 / 1e9;
 
   if (take_keyframe) {
+    size_t new_kps_added = add_flows_on_grids(
+        imgl, kdl, num_features_per_image, num_bin_x, num_bin_y,
+        empty_cells_thresh, last_frame_num_filled_cells);
+
+    new_kps += new_kps_added;
+
     // Reset some counter
     num_consecutive_regular_frames = 0;
     take_keyframe = false;
     new_kps = 0;
+
+    pangolin::ManagedImage<uint8_t> imgr = pangolin::LoadImage(images[fcidr]);
+    imgr_v.CopyFrom(
+        visnav::Image<uint8_t>(imgr.ptr, imgr.w, imgr.h, imgr.pitch));
 
     // Optical Flow to find keypoints and stereo matches to right image
     //    optical_flows(imgl, imgr, kdl, kdr, md_stereo,
@@ -1169,16 +1192,20 @@ bool next_step() {
 
     md_stereo.T_i_j = T_0_1;
 
+    /// Do Optical Flow here
+    //    std::unordered_map<FeatureId, Eigen::AffineCompact2f> l_r_transforms;
+    //    initialize_transforms(kdl, l_r_transforms);
+    matchOpticalFlow(imgl_v, imgr_v, kdl, kdr, md_stereo, pyramid_level,
+                     backproject_distance_threshold2);
+
+    auto ckp4 = std::chrono::high_resolution_clock::now();
+    double t4 =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(ckp4 - ckp3)
+            .count();
+    total_t4 += t4 / 1e9;
+
     Eigen::Matrix3d E;
     computeEssential(T_0_1, E);
-
-    /// Do Optical Flow here
-    std::unordered_map<FeatureId, Eigen::AffineCompact2f> l_r_transforms;
-    initialize_transforms(md, kdl, projected_points, projected_track_ids, true,
-                          l_r_transforms);
-    matchOpticalFlow(imgl_v, imgr_v, kdl, kdr, md_stereo, pyramid_level,
-                     backproject_distance_threshold2, l_r_transforms);
-
     findInliersEssential(kdl, kdr, calib_cam.intrinsics[0],
                          calib_cam.intrinsics[1], E, 1e-3, md_stereo);
 
@@ -1244,6 +1271,12 @@ bool next_step() {
 
     compute_projections();
 
+    auto ckp5 = std::chrono::high_resolution_clock::now();
+    double t5 =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(ckp5 - ckp4)
+            .count();
+    total_t5 += t5 / 1e9;
+
     current_frame++;
     return true;
   } else {
@@ -1274,8 +1307,9 @@ bool next_step() {
     current_cam.T_w_c = md.T_w_c;
     all_poses.emplace(fcidl, current_cam);
 
-    if (int(md.inliers.size()) < new_kf_min_inliers ||
-        num_consecutive_regular_frames >= max_consecutive_regular_frames
+    if (int(md.inliers.size()) < new_kf_min_inliers
+        //        || num_consecutive_regular_frames >=
+        //        max_consecutive_regular_frames
         //        && !opt_running && !opt_finished
     ) {
       std::cout << "Found " << md.inliers.size() << " inliers matches."
@@ -1295,6 +1329,12 @@ bool next_step() {
     // update image views
     change_display_to_image(fcidl);
     change_display_to_image(fcidr);
+
+    auto ckp6 = std::chrono::high_resolution_clock::now();
+    double t6 =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(ckp6 - ckp3)
+            .count();
+    total_t6 += t6 / 1e9;
 
     current_frame++;
     return true;

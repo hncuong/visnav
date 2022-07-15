@@ -36,6 +36,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <iostream>
 #include <sstream>
 #include <thread>
+#include <random>
+#include <string>
 
 #include <sophus/se3.hpp>
 
@@ -48,6 +50,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <pangolin/image/typed_image.h>
 #include <pangolin/pangolin.h>
 
+#include <opencv2/core.hpp>
+
 #include <CLI/CLI.hpp>
 
 #include <visnav/common_types.h>
@@ -58,11 +62,16 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <visnav/map_utils.h>
 #include <visnav/matching_utils.h>
 #include <visnav/vo_utils.h>
+#include <visnav/optical_flow_utils.h>
+#include <visnav/of_grid.h>
 
 #include <visnav/gui_helper.h>
 #include <visnav/tracks.h>
 
 #include <visnav/serialization.h>
+
+// Header files for custom image and image pyramid
+#include <visnav/image/image_pyr.h>
 
 using namespace visnav;
 
@@ -103,6 +112,10 @@ std::set<FrameId> kf_frames;
 
 // std::shared_ptr<std::thread> opt_thread;
 
+/// For Optical flows
+int num_consecutive_regular_frames = 0;
+int max_consecutive_regular_frames = 20;
+
 /// intrinsic calibration
 Calibration calib_cam;
 Calibration calib_cam_opt;
@@ -131,18 +144,62 @@ Cameras all_poses;
 Cameras cameras_opt;
 
 /// landmark positions and feature observations in current map
-Landmarks landmarks;
+// Flows landmarks;
 
 /// copy of landmarks for optimization in parallel thread
-Landmarks landmarks_opt;
+Flows landmarks_opt;
 
 /// landmark positions that were removed from the current map
-Landmarks old_landmarks;
+Flows old_landmarks;
 
 /// cashed info on reprojected landmarks; recomputed every time time from
 /// cameras, landmarks, and feature_tracks; used for visualization and
 /// determining outliers; indexed by images
 ImageProjections image_projections;
+
+//////////////////////////////////////////////
+/// Optical Flows specific
+/// Keypoints data of last frame
+KeypointsData kd_last;
+/// Last image
+pangolin::ManagedImage<uint8_t> imgl_last;
+
+/// Flows
+Flows flows;
+Flows all_flows;
+
+/// Next flow id to add to all flows
+TrackId next_flow_id = 0;
+
+/// Flows to show
+std::unordered_map<TrackId, Eigen::Vector3f> flows_to_show;
+
+/// For generating random colors
+cv::RNG rng;
+/// Forward-backward back project distance threshold for optical flows
+/// Square norm
+double backproject_distance_threshold2 = 0.04;
+
+/// Image Pyramid for leftframe, rightframe, nextframe
+visnav::ManagedImagePyr<uint8_t> left_pyr, right_pyr, next_pyr, imgl_last_pyr;
+
+/// Map storing FeatureID and its corresponding TrackID
+std::unordered_map<FeatureId, TrackId> propagate_tracks;
+
+/// Last match feature to Track
+LandmarkMatchData last_md_featureToTrack;
+
+/// Pyramid level
+int pyramid_level = 3;
+
+/// Cells to store keypoints
+int num_bin_x = 5;
+int num_bin_y = 5;
+size_t last_frame_num_filled_cells = 25;
+
+/// Num keypoints added to get new keyframes
+int new_kf_num_new_keypoints = 80;
+int new_kps = 0;
 
 /// TIME Measurements
 double total_t1 = 0.;
@@ -183,6 +240,13 @@ pangolin::Var<bool> show_points3d("hidden.show_points", true, true);
 pangolin::Var<bool> show_old_points3d("hidden.show_old_points3d", true, true);
 
 //////////////////////////////////////////////
+/// For Optical flows options
+pangolin::Var<bool> show_flows("ui.show_flows", true, true);
+pangolin::Var<int> num_flows_to_draw("hidden.num_flows_to_draw", 500, 1, 1000);
+pangolin::Var<int> max_track_length("hidden.max_track_length", 20, 10, 200);
+pangolin::Var<double> line_width("hidden.line_width", 2.0, 1.0, 3.0);
+
+//////////////////////////////////////////////
 /// Feature extraction and matching options
 
 pangolin::Var<int> num_features_per_image("hidden.num_features", 1500, 10,
@@ -197,7 +261,7 @@ pangolin::Var<double> match_max_dist_2d("hidden.match_max_dist_2d", 20.0, 1.0,
 
 pangolin::Var<int> new_kf_min_inliers("hidden.new_kf_min_inliers", 80, 1, 200);
 
-pangolin::Var<int> max_num_kfs("hidden.max_num_kfs", 10, 5, 20);
+pangolin::Var<int> max_num_kfs("hidden.max_num_kfs", 10, 5, 200);
 
 pangolin::Var<double> cam_z_threshold("hidden.cam_z_threshold", 0.1, 1.0, 0.0);
 
@@ -243,6 +307,12 @@ int main(int argc, char** argv) {
   std::string dataset_path = "data/V1_01_easy/mav0";
   std::string cam_calib = "opt_calib.json";
 
+  /// OF Start frame for debugging
+  int start_frame_idx = 0;
+  double backproject_distance_threshold_in_pixels = 0.2;
+  int kf_frequency = 20;
+  int df_pyramid_lv = 3;
+
   CLI::App app{"Visual odometry."};
 
   app.add_option("--show-gui", show_gui, "Show GUI");
@@ -251,6 +321,27 @@ int main(int argc, char** argv) {
   app.add_option("--cam-calib", cam_calib,
                  "Path to camera calibration. Default: " + cam_calib);
 
+  /// OF Odometry options
+  app.add_option(
+      "--start-frame", start_frame_idx,
+      "Start frame index. Default: " + std::to_string(start_frame_idx));
+  app.add_option("--dist-thresh", backproject_distance_threshold_in_pixels,
+                 "Forward-backward project distance threshold for Optical "
+                 "Flow. Default: " +
+                     std::to_string(backproject_distance_threshold_in_pixels));
+  app.add_option("--kf_frequency", kf_frequency,
+                 "Number of max consecutive regular frames: " +
+                     std::to_string(kf_frequency));
+  app.add_option("--pyramid-lv", df_pyramid_lv,
+                 "Number of pyramid lv " + std::to_string(df_pyramid_lv));
+  app.add_option("--nbin-x", num_bin_x,
+                 "Number bins on x axis " + std::to_string(num_bin_x));
+  app.add_option("--nbin-y", num_bin_y,
+                 "Number bins on x axis " + std::to_string(num_bin_y));
+  app.add_option("--new-kps-kf", new_kf_num_new_keypoints,
+                 "Number of accum new kps to take new kf " +
+                     std::to_string(new_kf_num_new_keypoints));
+
   try {
     app.parse(argc, argv);
   } catch (const CLI::ParseError& e) {
@@ -258,6 +349,19 @@ int main(int argc, char** argv) {
   }
 
   load_data(dataset_path, cam_calib);
+  current_frame = start_frame_idx;
+  backproject_distance_threshold2 = backproject_distance_threshold_in_pixels *
+                                    backproject_distance_threshold_in_pixels;
+  max_consecutive_regular_frames = kf_frequency;
+  pyramid_level = df_pyramid_lv;
+  last_frame_num_filled_cells = num_bin_x * num_bin_y;
+  std::cout << "START with frame " << current_frame
+            << " and backproject threshold " << backproject_distance_threshold2
+            << " and KF frequency " << max_consecutive_regular_frames
+            << " and pyramid lv " << pyramid_level << " and num bins x, y "
+            << num_bin_x << " " << num_bin_y << " last frame filled "
+            << last_frame_num_filled_cells << " - new kf accumulate new kps "
+            << new_kf_num_new_keypoints << "\n";
 
   if (show_gui) {
     pangolin::CreateWindowAndBind("Main", 1800, 1000);
@@ -394,6 +498,10 @@ int main(int argc, char** argv) {
             << total_t3 << " " << total_t4 << " " << total_t5 << " " << total_t6
             << " \n";
 
+  /// Save cemeras trajectory for evaluation
+  save_trajectory();
+  save_all_trajectory();
+
   return 0;
 }
 
@@ -420,14 +528,8 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
 
       for (size_t i = 0; i < cr.corners.size(); i++) {
         Eigen::Vector2d c = cr.corners[i];
-        double angle = cr.corner_angles[i];
+        //        double angle = cr.corner_angles[i];
         pangolin::glDrawCirclePerimeter(c[0], c[1], 3.0);
-
-        Eigen::Vector2d r(3, 0);
-        Eigen::Rotation2Dd rot(angle);
-        r = rot * r;
-
-        pangolin::glDrawLine(c, c + r);
       }
 
       pangolin::GlFont::I()
@@ -440,6 +542,183 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
       pangolin::GlFont::I().Text("Corners not processed").Draw(5, text_row);
     }
     text_row += 20;
+  }
+
+  /*
+   * Draw some flows from start to current frame
+   * TODO Draw consistent set of flows
+   */
+  //  show_flows = true;
+  if (show_flows) {
+    glColor3f(0.0, 0.0, 0.5);  // navy
+    glLineWidth(line_width);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    /// TODO Change to all flows for visualization
+    /// Maybe no 3d correspondent yet
+    /// Merge later if needed
+    size_t num_flows = all_flows.size();
+    /// Check alive flows and draw circle around it
+    std::vector<TrackId> aliveFlows;
+    int total_flows_length = 0;
+
+    for (const auto& kv : all_flows) {
+      if (kv.second.alive) {
+        aliveFlows.emplace_back(kv.first);
+        total_flows_length += kv.second.flow.size();
+
+        // Draw circle
+        if (kv.second.flow.count(fcid) > 0 && feature_corners.count(fcid) > 0) {
+          const auto& featureId = kv.second.flow.at(fcid);
+          const KeypointsData& cr = feature_corners.at(fcid);
+          Eigen::Vector2d c = cr.corners[featureId];
+          pangolin::glDrawCirclePerimeter(c[0], c[1], 3.0);
+        }
+      }
+    }
+
+    int mean_flow_length = 0;
+    if (aliveFlows.size() > 0)
+      mean_flow_length = total_flows_length / aliveFlows.size();
+
+    pangolin::GlFont::I()
+        .Text("Current frame has %d flows, avg length %d, %d landmarks",
+              aliveFlows.size(), mean_flow_length, flows.size())
+        .Draw(5, text_row);
+    text_row += 20;
+
+    /*
+     * Ensure number of flows to draw.
+     * Discard die out flows
+     * Add new flows from alive flows if possible
+     */
+    // Check for liveness
+    std::vector<TrackId> flowsToDiscard;
+    for (const auto& flow_id : flows_to_show) {
+      if (all_flows.count(flow_id.first) == 0) {
+        // If flow disappear
+        flowsToDiscard.emplace_back(flow_id.first);
+      } else {
+        // Or not alive anymore
+        if (!all_flows.at(flow_id.first).alive)
+          //// if (all_flows.at(flow_id.first).flow.count(fcid) == 0) // Wrong
+          // since there are left and right frame
+          flowsToDiscard.emplace_back(flow_id.first);
+      }
+    }
+    // Discard
+    for (const auto& flow_id : flowsToDiscard) {
+      flows_to_show.erase(flow_id);
+    }
+
+    // Fill it until it reach the numbers needed
+    if (flows_to_show.size() < num_flows_to_draw) {
+      auto num_flows_to_add = num_flows_to_draw - flows_to_show.size();
+
+      // Try to add flows then pick random color associated
+      std::vector<TrackId> flowsToAdd;
+
+      // Pick random flows
+      // First choose alive flows that not show yet
+      std::vector<TrackId> flowsToPick;
+      for (const auto& kv : all_flows) {
+        if (flows_to_show.count(kv.first) == 0 && kv.second.alive) {
+          flowsToPick.emplace_back(kv.first);
+        }
+      }
+
+      // Now try to pick new flows
+      if (num_flows_to_add >= flowsToPick.size()) {
+        // Pick all
+        for (const auto& flow_id : flowsToPick)
+          flowsToAdd.emplace_back(flow_id);
+      } else {
+        // Random selection.
+        // NOTE: this function is C++17
+        // FIXME Notice in case it doesn't work here
+        std::sample(flowsToPick.begin(), flowsToPick.end(),
+                    std::back_inserter(flowsToAdd), num_flows_to_add,
+                    std::mt19937{std::random_device{}()});
+      }
+
+      // Add to show along with a random color
+      for (const auto& flow_id : flowsToAdd) {
+        // Pick random color
+        float r = rng.uniform(0, 256) / 255.f;
+        float g = rng.uniform(0, 256) / 255.f;
+        float b = rng.uniform(0, 256) / 255.f;
+        Eigen::Vector3f color_code(r, g, b);
+
+        flows_to_show.emplace(flow_id, color_code);
+      }
+    }
+
+    /*
+     * Draw selected flows's trajectory.
+     */
+    /// Draw flows of current fcid to
+    size_t flow_draw_cnt = 0;
+    std::vector<TrackId> flows_to_discard;
+
+    for (const auto& kv : flows_to_show) {
+      const auto& trackId = kv.first;
+      const auto& color_code = kv.second;
+      // TODO Change gl color here
+      glColor3f(color_code[0], color_code[1], color_code[2]);
+
+      // Only select some flows
+      if (all_flows.count(trackId) == 0 || !all_flows.at(trackId).alive) {
+        flows_to_discard.emplace_back(trackId);
+      } else {
+        const auto& flow = all_flows.at(trackId);
+
+        // If flow exist in the frame
+        // Draw the point in the current frame
+        // And draw flow back to the start
+        //        int max_track_length = 20;
+        int track_length = 0;
+
+        if (flow.flow.count(fcid) > 0 && feature_corners.count(fcid) > 0) {
+          const auto& featureId = flow.flow.at(fcid);
+
+          const KeypointsData& cr = feature_corners.at(fcid);
+          Eigen::Vector2d c = cr.corners[featureId];
+          //          pangolin::glDrawCirclePerimeter(c[0], c[1], 3.0);
+
+          if (show_ids) {
+            pangolin::GlFont::I().Text("%d", trackId).Draw(c[0], c[1]);
+          }
+
+          // Draw line to previous if exists
+          FrameCamId previous_fcid(fcid.frame_id - 1, fcid.cam_id);
+          while (flow.flow.count(previous_fcid) > 0 &&
+                 feature_corners.count(previous_fcid) > 0) {
+            // Get previous frame featureId of the flow
+            const auto& prev_featureId = flow.flow.at(previous_fcid);
+            Eigen::Vector2d prev_c =
+                feature_corners.at(previous_fcid).corners[prev_featureId];
+
+            // Draw to previous
+            pangolin::glDrawLine(c, prev_c);
+
+            // Check maximum length reach
+            track_length++;
+            if (track_length >= max_track_length) break;
+
+            // Update previous frame keypoints and fcid
+            c = prev_c;
+            previous_fcid =
+                FrameCamId(previous_fcid.frame_id - 1, previous_fcid.cam_id);
+          }
+
+          flow_draw_cnt++;
+        }
+      }
+    }
+
+    // Discard die out flows
+    for (const auto& trackId : flows_to_discard) flows_to_show.erase(trackId);
   }
 
   if (show_matches || show_inliers) {
@@ -476,14 +755,8 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
                                   : it->second.matches[i].second;
 
           Eigen::Vector2d c = cr.corners[c_idx];
-          double angle = cr.corner_angles[c_idx];
+          //          double angle = cr.corner_angles[c_idx];
           pangolin::glDrawCirclePerimeter(c[0], c[1], 3.0);
-
-          Eigen::Vector2d r(3, 0);
-          Eigen::Rotation2Dd rot(angle);
-          r = rot * r;
-
-          pangolin::glDrawLine(c, c + r);
 
           if (show_ids) {
             pangolin::GlFont::I().Text("%d", i).Draw(c[0], c[1]);
@@ -508,14 +781,8 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
                                   : it->second.inliers[i].second;
 
           Eigen::Vector2d c = cr.corners[c_idx];
-          double angle = cr.corner_angles[c_idx];
+          //          double angle = cr.corner_angles[c_idx];
           pangolin::glDrawCirclePerimeter(c[0], c[1], 3.0);
-
-          Eigen::Vector2d r(3, 0);
-          Eigen::Rotation2Dd rot(angle);
-          r = rot * r;
-
-          pangolin::glDrawLine(c, c + r);
 
           if (show_ids) {
             pangolin::GlFont::I().Text("%d", i).Draw(c[0], c[1]);
@@ -723,10 +990,10 @@ void draw_scene() {
   }
 
   // render points
-  if (show_points3d && landmarks.size() > 0) {
+  if (show_points3d && flows.size() > 0) {
     glPointSize(3.0);
     glBegin(GL_POINTS);
-    for (const auto& kv_lm : landmarks) {
+    for (const auto& kv_lm : flows) {
       const bool in_cam_1 = kv_lm.second.obs.count(fcid1) > 0;
       const bool in_cam_2 = kv_lm.second.obs.count(fcid2) > 0;
 
@@ -834,60 +1101,85 @@ void load_data(const std::string& dataset_path, const std::string& calib_path) {
 // Execute next step in the overall odometry pipeline. Call this repeatedly
 // until it returns false for automatic execution.
 bool next_step() {
-  // Start measure time
   auto start = std::chrono::high_resolution_clock::now();
-
   if (current_frame >= int(images.size()) / NUM_CAMS) return false;
 
   const Sophus::SE3d T_0_1 = calib_cam.T_i_c[0].inverse() * calib_cam.T_i_c[1];
 
+  FrameCamId fcidl(current_frame, 0), fcidr(current_frame, 1);
+  FrameCamId fcid_last(current_frame - 1, 0);
+  KeypointsData kdl;
+
+  pangolin::ManagedImage<uint8_t> imgl = pangolin::LoadImage(images[fcidl]);
+  std::cout << "\nPROCESSING " << fcidl << "\n";
+
+  MatchData md_stereo;
+  LandmarkMatchData md;
+  KeypointsData kdr;
+
+  // 1st: Flow from last frame to current frame
+  MatchData md_last;
+  auto ckp1 = std::chrono::high_resolution_clock::now();
+  double t1 = std::chrono::duration_cast<std::chrono::nanoseconds>(ckp1 - start)
+                  .count();
+  total_t1 += t1 / 1e9;
+
+  /// Do Optical Flow here
+  if (current_frame > 0) {
+    optical_flows_opencv(imgl_last, imgl, kd_last, kdl, md_last,
+                         backproject_distance_threshold2, pyramid_level);
+  }
+
+  auto ckp2 = std::chrono::high_resolution_clock::now();
+  double t2 =
+      std::chrono::duration_cast<std::chrono::nanoseconds>(ckp2 - ckp1).count();
+  total_t2 += t2 / 1e9;
+
+  // Add to all flows for visualization
+  update_and_add_flows(fcid_last, md_last, all_flows, next_flow_id);
+
+  /// Examine to add new flows by grids
+  /// If number of empty cells cross a threshold * total_cells
+  /// Then try to create new flows in empty cells
+  double empty_cells_thresh = 0.99;
+  size_t new_kps_added = add_flows_on_grids(
+      imgl, kdl, num_features_per_image, num_bin_x, num_bin_y,
+      empty_cells_thresh, last_frame_num_filled_cells);
+
+  new_kps += new_kps_added;
+  //  if (new_kps >= new_kf_num_new_keypoints) {
+  //    std::cout << "\tAccumulate " << new_kps
+  //              << " new keypoints. Take keyframe.\n";
+  //    take_keyframe = true;
+  //  }
+
+  auto ckp3 = std::chrono::high_resolution_clock::now();
+  double t3 =
+      std::chrono::duration_cast<std::chrono::nanoseconds>(ckp3 - ckp2).count();
+  total_t3 += t3 / 1e9;
+
   if (take_keyframe) {
+    // Reset some counter
+    num_consecutive_regular_frames = 0;
     take_keyframe = false;
+    new_kps = 0;
 
-    FrameCamId fcidl(current_frame, 0), fcidr(current_frame, 1);
-
-    std::vector<Eigen::Vector2d, Eigen::aligned_allocator<Eigen::Vector2d>>
-        projected_points;
-    std::vector<TrackId> projected_track_ids;
-
-    project_landmarks(current_pose, calib_cam.intrinsics[0], landmarks,
-                      cam_z_threshold, projected_points, projected_track_ids);
-
-    std::cout << "KF Projected " << projected_track_ids.size() << " points."
-              << std::endl;
-
-    MatchData md_stereo;
-    KeypointsData kdl, kdr;
-
-    pangolin::ManagedImage<uint8_t> imgl = pangolin::LoadImage(images[fcidl]);
     pangolin::ManagedImage<uint8_t> imgr = pangolin::LoadImage(images[fcidr]);
 
-    auto ckp1 = std::chrono::high_resolution_clock::now();
-    double t1 =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(ckp1 - start)
-            .count();
-    total_t1 += t1 / 1e9;
-
-    detectKeypointsAndDescriptors(imgl, kdl, num_features_per_image,
-                                  rotate_features);
-    detectKeypointsAndDescriptors(imgr, kdr, num_features_per_image,
-                                  rotate_features);
-
-    auto ckp2 = std::chrono::high_resolution_clock::now();
-    double t2 =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(ckp2 - ckp1)
-            .count();
-    total_t2 += t2 / 1e9;
+    // Optical Flow to find keypoints and stereo matches to right image
+    optical_flows_opencv(imgl, imgr, kdl, kdr, md_stereo,
+                         backproject_distance_threshold2, pyramid_level);
 
     md_stereo.T_i_j = T_0_1;
 
+    auto ckp4 = std::chrono::high_resolution_clock::now();
+    double t4 =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(ckp4 - ckp3)
+            .count();
+    total_t4 += t4 / 1e9;
+
     Eigen::Matrix3d E;
     computeEssential(T_0_1, E);
-
-    matchDescriptors(kdl.corner_descriptors, kdr.corner_descriptors,
-                     md_stereo.matches, feature_match_max_dist,
-                     feature_match_test_next_best);
-
     findInliersEssential(kdl, kdr, calib_cam.intrinsics[0],
                          calib_cam.intrinsics[1], E, 1e-3, md_stereo);
 
@@ -896,53 +1188,54 @@ bool next_step() {
 
     feature_corners[fcidl] = kdl;
     feature_corners[fcidr] = kdr;
-    // TODO update to insert
     feature_matches.insert(
         std::make_pair(std::make_pair(fcidl, fcidr), md_stereo));
-    //    feature_matches[std::make_pair(fcidl, fcidr)] = md_stereo;
 
-    LandmarkMatchData md;
+    // Update kd last and img last for next frame
+    kd_last = kdl;
+    imgl_last.CopyFrom(imgl);
 
-    find_matches_landmarks(kdl, landmarks, feature_corners, projected_points,
-                           projected_track_ids, match_max_dist_2d,
-                           feature_match_max_dist, feature_match_test_next_best,
-                           md);
+    // CHange to optical flow version
+    // Update find match landmark for Optical flow; landmark that does not
+    // have obs last frame
+    find_matches_landmarks_with_otpical_flow(fcid_last, md_last, flows, md);
 
     std::cout << "KF Found " << md.matches.size() << " matches." << std::endl;
-
-    localize_camera(current_pose, calib_cam.intrinsics[0], kdl, landmarks,
-                    reprojection_error_pnp_inlier_threshold_pixel, md);
+    // TODO CHange to optical flow version
+    localize_camera_optical_flow(
+        current_pose, calib_cam.intrinsics[0], kdl, flows,
+        reprojection_error_pnp_inlier_threshold_pixel, md);
 
     current_pose = md.T_w_c;
-    Camera current_cam;
-    current_cam.T_w_c = md.T_w_c;
-    all_poses.emplace(fcidl, current_cam);
 
     cameras[fcidl].T_w_c = current_pose;
     cameras[fcidr].T_w_c = current_pose * T_0_1;
+    // TODO CHange to optical flow version
+    add_new_landmarks_optical_flow(fcidl, fcidr, kdl, kdr, calib_cam, md_stereo,
+                                   md, flows, next_landmark_id);
+    // Update match for next round
+    last_md_featureToTrack = md;
 
-    add_new_landmarks(fcidl, fcidr, kdl, kdr, calib_cam, md_stereo, md,
-                      landmarks, next_landmark_id);
-
-    remove_old_keyframes(fcidl, max_num_kfs, cameras, all_cameras, landmarks,
-                         old_landmarks, kf_frames);
+    // TODO CHange to optical flow version
+    remove_old_keyframes_optical_flow(fcidl, max_num_kfs, cameras, all_cameras,
+                                      flows, old_landmarks, kf_frames);
     optimize();
-
-    current_pose = cameras[fcidl].T_w_c;
 
     if (!opt_running && opt_finished) {
       //      opt_thread->join();
-      landmarks = landmarks_opt;
+      // TODO If move to thread; for flows update only T_w_c
+      flows = landmarks_opt;
       cameras = cameras_opt;
       calib_cam = calib_cam_opt;
 
       opt_finished = false;
+    }
 
-      // Save all poses for left cam
-      for (const auto& kv : cameras) {
-        if (kv.first.cam_id == 0) {
-          all_poses.emplace(kv.first, kv.second);
-        }
+    current_pose = cameras[fcidl].T_w_c;
+    // TODO Save all poses for left cam
+    for (const auto& kv : cameras) {
+      if (kv.first.cam_id == 0) {
+        all_poses.emplace(kv.first, kv.second);
       }
     }
 
@@ -952,83 +1245,59 @@ bool next_step() {
 
     compute_projections();
 
-    auto ckp3 = std::chrono::high_resolution_clock::now();
-    double t3 =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(ckp3 - ckp2)
-            .count();
-    total_t3 += t3 / 1e9;
-
-    current_frame++;
-    return true;
-  } else {
-    FrameCamId fcidl(current_frame, 0), fcidr(current_frame, 1);
-
-    std::vector<Eigen::Vector2d, Eigen::aligned_allocator<Eigen::Vector2d>>
-        projected_points;
-    std::vector<TrackId> projected_track_ids;
-
-    project_landmarks(current_pose, calib_cam.intrinsics[0], landmarks,
-                      cam_z_threshold, projected_points, projected_track_ids);
-
-    std::cout << "Projected " << projected_track_ids.size() << " points."
-              << std::endl;
-
-    KeypointsData kdl;
-
-    auto ckp4 = std::chrono::high_resolution_clock::now();
-    double t4 =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(ckp4 - start)
-            .count();
-    total_t4 += t4 / 1e9;
-
-    pangolin::ManagedImage<uint8_t> imgl = pangolin::LoadImage(images[fcidl]);
-
-    detectKeypointsAndDescriptors(imgl, kdl, num_features_per_image,
-                                  rotate_features);
-
     auto ckp5 = std::chrono::high_resolution_clock::now();
     double t5 =
         std::chrono::duration_cast<std::chrono::nanoseconds>(ckp5 - ckp4)
             .count();
     total_t5 += t5 / 1e9;
 
+    current_frame++;
+    return true;
+  } else {
+    //
+    num_consecutive_regular_frames++;
+
+    // Change kd_last to kdl for next frame
+    kd_last = kdl;
+    imgl_last.CopyFrom(imgl);
+
     feature_corners[fcidl] = kdl;
 
+    // TODO Use Optical Flows version
     LandmarkMatchData md;
-    find_matches_landmarks(kdl, landmarks, feature_corners, projected_points,
-                           projected_track_ids, match_max_dist_2d,
-                           feature_match_max_dist, feature_match_test_next_best,
-                           md);
+    find_matches_landmarks_with_otpical_flow(fcid_last, md_last, flows, md);
 
     std::cout << "Found " << md.matches.size() << " matches." << std::endl;
 
-    localize_camera(current_pose, calib_cam.intrinsics[0], kdl, landmarks,
-                    reprojection_error_pnp_inlier_threshold_pixel, md);
+    localize_camera_optical_flow(
+        current_pose, calib_cam.intrinsics[0], kdl, flows,
+        reprojection_error_pnp_inlier_threshold_pixel, md);
+
+    // Update match for next round
+    last_md_featureToTrack = md;
 
     current_pose = md.T_w_c;
     Camera current_cam;
     current_cam.T_w_c = md.T_w_c;
     all_poses.emplace(fcidl, current_cam);
 
-    if (int(md.inliers.size()) < new_kf_min_inliers && !opt_running &&
-        !opt_finished) {
+    if (int(md.inliers.size()) < new_kf_min_inliers
+        //        || num_consecutive_regular_frames >=
+        //        max_consecutive_regular_frames
+        //        && !opt_running && !opt_finished
+    ) {
+      std::cout << "Found " << md.inliers.size() << " inliers matches."
+                << "Take new keyframe next step!\n";
       take_keyframe = true;
     }
 
     //    if (!opt_running && opt_finished) {
-    //      opt_thread->join();
-    //      landmarks = landmarks_opt;
+    //      //      opt_thread->join();
+    //      flows = landmarks_opt;
     //      cameras = cameras_opt;
     //      calib_cam = calib_cam_opt;
 
     //      opt_finished = false;
-
-    //      // TODO Save all poses for left cam
-    //      for (const auto& kv : cameras) {
-    //        if (kv.first.cam_id == 0) {
-    //          all_poses.emplace(kv.first, kv.second);
-    //        }
-    //      }
     //    }
 
     // update image views
@@ -1037,7 +1306,7 @@ bool next_step() {
 
     auto ckp6 = std::chrono::high_resolution_clock::now();
     double t6 =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(ckp6 - ckp5)
+        std::chrono::duration_cast<std::chrono::nanoseconds>(ckp6 - ckp3)
             .count();
     total_t6 += t6 / 1e9;
 
@@ -1051,7 +1320,7 @@ bool next_step() {
 void compute_projections() {
   image_projections.clear();
 
-  for (const auto& kv_lm : landmarks) {
+  for (const auto& kv_lm : flows) {
     const TrackId track_id = kv_lm.first;
 
     for (const auto& kv_obs : kv_lm.second.obs) {
@@ -1099,17 +1368,17 @@ void compute_projections() {
 // Optimize the active map with bundle adjustment
 void optimize() {
   size_t num_obs = 0;
-  for (const auto& kv : landmarks) {
+  for (const auto& kv : flows) {
     num_obs += kv.second.obs.size();
   }
 
   std::cerr << "Optimizing map with " << cameras.size() << " cameras, "
-            << landmarks.size() << " points and " << num_obs << " observations."
+            << flows.size() << " points and " << num_obs << " observations."
             << std::endl;
 
-  // Fix oldest two cameras to fix SE3 and scale gauge. Making the whole second
-  // camera constant is a bit suboptimal, since we only need 1 DoF, but it's
-  // simple and the initial poses should be good from calibration.
+  // Fix oldest two cameras to fix SE3 and scale gauge. Making the whole
+  // second camera constant is a bit suboptimal, since we only need 1 DoF, but
+  // it's simple and the initial poses should be good from calibration.
   FrameId fid = *(kf_frames.begin());
   // std::cout << "fid " << fid << std::endl;
 
@@ -1123,12 +1392,18 @@ void optimize() {
 
   calib_cam_opt = calib_cam;
   cameras_opt = cameras;
-  landmarks_opt = landmarks;
+  landmarks_opt = flows;
 
   opt_running = true;
+
+  /*
+   * Try bundle adjustment in foregroun here
+   */
   std::set<FrameCamId> fixed_cameras = {{fid, 0}, {fid, 1}};
-  bundle_adjustment(feature_corners, ba_options, fixed_cameras, calib_cam_opt,
-                    cameras_opt, landmarks_opt);
+
+  bundle_adjustment_for_flows(feature_corners, ba_options, fixed_cameras,
+                              calib_cam_opt, cameras_opt, landmarks_opt);
+
   opt_finished = true;
   opt_running = false;
 
@@ -1157,7 +1432,7 @@ void save_trajectory() {
   all_cameras[last_fcidl] = current_cam;
 
   // Store the trajectory over
-  std::ofstream trajectory_file("stamped_odometry_trajectory.txt");
+  std::ofstream trajectory_file("stamped_of_opencv_odometry_trajectory.txt");
   trajectory_file << std::fixed;
 
   if (trajectory_file.is_open()) {
@@ -1180,8 +1455,9 @@ void save_trajectory() {
                       << quaternion_coefficients.w() << "\n";
     }
     trajectory_file.close();
-    std::cout << "Trajectory is saved to stamped_odometry_trajectory.txt"
-              << std::endl;
+    std::cout
+        << "Trajectory is saved to stamped_of_opencv_odometry_trajectory.txt"
+        << std::endl;
   } else {
     std::cout << "Fail to open the file" << std::endl;
   }
@@ -1189,7 +1465,8 @@ void save_trajectory() {
 
 void save_all_trajectory() {
   // Store the trajectory over
-  std::ofstream trajectory_file("stamped_odometry_trajectory_all.txt");
+  std::ofstream trajectory_file(
+      "stamped_of_opencv_odometry_trajectory_all.txt");
   trajectory_file << std::fixed;
 
   if (trajectory_file.is_open()) {
@@ -1213,7 +1490,7 @@ void save_all_trajectory() {
     }
     trajectory_file.close();
     std::cout << "Trajectory is saved to "
-                 "stamped_odometry_trajectory_all.txt"
+                 "stamped_of_opencv_odometry_trajectory_all.txt"
               << std::endl;
   } else {
     std::cout << "Fail to open the file" << std::endl;

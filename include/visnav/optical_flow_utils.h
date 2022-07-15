@@ -64,10 +64,11 @@ void add_keypoints(const pangolin::ManagedImage<uint8_t>& img_raw,
 // Use optical flow from a last frame to a new frame to establish
 //  1. keypoints in new frame
 //  2. match data between last frame and new frame
-void optical_flows(const pangolin::ManagedImage<uint8_t>& img_last,
-                   const pangolin::ManagedImage<uint8_t>& img_current,
-                   const KeypointsData& kd_last, KeypointsData& kd_current,
-                   MatchData& md, double distance_threshold) {
+void optical_flows_opencv(const pangolin::ManagedImage<uint8_t>& img_last,
+                          const pangolin::ManagedImage<uint8_t>& img_current,
+                          const KeypointsData& kd_last,
+                          KeypointsData& kd_current, MatchData& md,
+                          double distance_threshold, int pyramid_level) {
   // If last frame have empty corner
   if (kd_last.corners.size() == 0) return;
 
@@ -89,7 +90,7 @@ void optical_flows(const pangolin::ManagedImage<uint8_t>& img_last,
   cv::TermCriteria criteria = cv::TermCriteria(
       (cv::TermCriteria::COUNT) + (cv::TermCriteria::EPS), 10, 0.03);
   cv::Size windowSize(15, 15);
-  int pyramid_level = 2;
+  //  int pyramid_level = 2;
   //  double distance_threshold = 1.0;
 
   std::vector<cv::Mat> old_frame_pyr, frame_pyr;
@@ -123,7 +124,7 @@ void optical_flows(const pangolin::ManagedImage<uint8_t>& img_last,
       Eigen::Vector2d right_keypoint(p1[i].x, p1[i].y);
 
       kd_current.corners.push_back(right_keypoint);
-      if ((diff.allFinite()) && (diff.norm() < distance_threshold)) {
+      if ((diff.allFinite()) && (diff.squaredNorm() < distance_threshold)) {
         md.matches.push_back(std::make_pair(i, match_id));
       }
       match_id++;
@@ -578,11 +579,7 @@ void update_and_add_flows(const FrameCamId& fcid_last, const MatchData& md_last,
 }
 
 void initialize_transforms(
-    const LandmarkMatchData& md, const KeypointsData& kdl,
-    const std::vector<Eigen::Vector2d,
-                      Eigen::aligned_allocator<Eigen::Vector2d>>&
-        projected_points,
-    const std::vector<TrackId>& projected_track_ids, const bool stereo_init,
+    const KeypointsData& kdl,
     std::unordered_map<FeatureId, Eigen::AffineCompact2f>& transforms) {
   // Init transformation to track
   for (size_t i = 0; i < kdl.corners.size(); i++) {
@@ -591,25 +588,11 @@ void initialize_transforms(
     tf.translation() = kdl.corners[i].cast<float>();
     transforms.emplace(i, tf);
   }
-
-  // Initilize transforms in case of non stereo matching
-  // TODO Maybe discard this to test
-  if (!stereo_init) {
-    for (const auto& match : md.inliers) {
-      FeatureId fid = match.first;
-      TrackId tid = match.second;
-
-      for (size_t t = 0; t < projected_track_ids.size(); t++) {
-        if (projected_track_ids[t] == tid) {
-          transforms.at(fid).translation() = projected_points[t].cast<float>();
-        }
-      }
-    }
-  }
 }
 
-bool trackPointAtLevel(const visnav::Image<const uint8_t>& img_2,
-                       const PatchT& dp, Eigen::AffineCompact2f& transform) {
+inline bool trackPointAtLevel(const visnav::Image<const uint8_t>& img_2,
+                              const PatchT& dp,
+                              Eigen::AffineCompact2f& transform) {
   bool patch_valid = true;
   int max_iterations = OF_TRACK_MAX_ITERATIONS;
 
@@ -642,11 +625,11 @@ bool trackPointAtLevel(const visnav::Image<const uint8_t>& img_2,
   return patch_valid;
 }
 
-bool trackPoint(const visnav::ManagedImagePyr<uint8_t>& old_pyr,
-                const visnav::ManagedImagePyr<uint8_t>& pyr,
-                const size_t& num_levels,
-                const Eigen::AffineCompact2f& old_transform,
-                Eigen::AffineCompact2f& transform) {
+inline bool trackPoint(const visnav::ManagedImagePyr<uint8_t>& old_pyr,
+                       const visnav::ManagedImagePyr<uint8_t>& pyr,
+                       const size_t& num_levels,
+                       const Eigen::AffineCompact2f& old_transform,
+                       Eigen::AffineCompact2f& transform) {
   bool patch_valid = true;
 
   transform.linear().setIdentity();
@@ -755,12 +738,15 @@ void match_optical(
  * @param distance_threshold
  * @param transforms
  */
-void matchOpticalFlow(
-    const visnav::ManagedImage<uint8_t>& img_last,
-    const visnav::ManagedImage<uint8_t>& img_current,
-    const KeypointsData& kd_last, KeypointsData& kd_current, MatchData& md,
-    int pyramid_level, double distance_threshold,
-    std::unordered_map<FeatureId, Eigen::AffineCompact2f>& transforms) {
+void matchOpticalFlow(const visnav::ManagedImage<uint8_t>& img_last,
+                      const visnav::ManagedImage<uint8_t>& img_current,
+                      const KeypointsData& kd_last, KeypointsData& kd_current,
+                      MatchData& md, int pyramid_level,
+                      double distance_threshold) {
+  // Init transform
+  std::unordered_map<FeatureId, Eigen::AffineCompact2f> transforms;
+  initialize_transforms(kd_last, transforms);
+
   // Create Image pyramid for two image pairs
   visnav::ManagedImagePyr<uint8_t> img_last_pyr, img_current_pyr;
   img_last_pyr.setFromImage(img_last, pyramid_level);
