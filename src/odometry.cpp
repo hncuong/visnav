@@ -975,13 +975,13 @@ bool next_step() {
 
     KeypointsData kdl;
 
+    pangolin::ManagedImage<uint8_t> imgl = pangolin::LoadImage(images[fcidl]);
+
     auto ckp4 = std::chrono::high_resolution_clock::now();
     double t4 =
         std::chrono::duration_cast<std::chrono::nanoseconds>(ckp4 - start)
             .count();
     total_t4 += t4 / 1e9;
-
-    pangolin::ManagedImage<uint8_t> imgl = pangolin::LoadImage(images[fcidl]);
 
     detectKeypointsAndDescriptors(imgl, kdl, num_features_per_image,
                                   rotate_features);

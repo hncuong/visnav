@@ -64,6 +64,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <visnav/vo_utils.h>
 #include <visnav/optical_flow_utils.h>
 #include <visnav/of_grid.h>
+#include <visnav/optical_flow.h>
 
 #include <visnav/gui_helper.h>
 #include <visnav/tracks.h>
@@ -191,6 +192,7 @@ LandmarkMatchData last_md_featureToTrack;
 
 /// Pyramid level
 int pyramid_level = 3;
+int stereo_pyramid_level = 3;
 
 /// Cells to store keypoints
 int num_bin_x = 5;
@@ -203,6 +205,7 @@ int new_kps = 0;
 
 /// TIME Measurements
 double total_t1 = 0.;
+double total_t10 = 0.;
 double total_t2 = 0.;
 double total_t3 = 0.;
 double total_t4 = 0.;
@@ -332,8 +335,13 @@ int main(int argc, char** argv) {
   app.add_option("--kf_frequency", kf_frequency,
                  "Number of max consecutive regular frames: " +
                      std::to_string(kf_frequency));
+  // For Optical flow pyramid
   app.add_option("--pyramid-lv", df_pyramid_lv,
                  "Number of pyramid lv " + std::to_string(df_pyramid_lv));
+  app.add_option("--stereo-pyramid-lv", stereo_pyramid_level,
+                 "Number of pyramid lv for stereo matching " +
+                     std::to_string(stereo_pyramid_level));
+  // For adding keypoints
   app.add_option("--nbin-x", num_bin_x,
                  "Number bins on x axis " + std::to_string(num_bin_x));
   app.add_option("--nbin-y", num_bin_y,
@@ -497,7 +505,7 @@ int main(int argc, char** argv) {
   std::cout << "\nTIME MEASUREMENTS: " << total_t1 << " " << total_t2 << " "
             << total_t3 << " " << total_t4 << " " << total_t5 << " " << total_t6
             << " \n";
-
+  std::cout << total_t10 << "\n";
   /// Save cemeras trajectory for evaluation
   save_trajectory();
   save_all_trajectory();
@@ -1113,17 +1121,29 @@ bool next_step() {
   pangolin::ManagedImage<uint8_t> imgl = pangolin::LoadImage(images[fcidl]);
   std::cout << "\nPROCESSING " << fcidl << "\n";
 
+  auto ckp10 = std::chrono::high_resolution_clock::now();
+  double t10 =
+      std::chrono::duration_cast<std::chrono::nanoseconds>(ckp10 - start)
+          .count();
+  total_t10 += t10 / 1e9;
+
   // convert pangolin::ManagedImage --> visnav::Image
   visnav::ManagedImage<uint8_t> imgl_v, imgr_v, imgl_last_v;
-  visnav::ManagedImagePyr<uint8_t> imgl_pyr, imgr_pyr, imgl_last_pyr;
+  //  visnav::ManagedImagePyr<uint8_t> imgl_pyr, imgr_pyr, imgl_last_pyr;
 
   imgl_v.CopyFrom(visnav::Image<uint8_t>(imgl.ptr, imgl.w, imgl.h, imgl.pitch));
 
   if (current_frame > 0) {
     imgl_last_v.CopyFrom(visnav::Image<uint8_t>(imgl_last.ptr, imgl_last.w,
                                                 imgl_last.h, imgl_last.pitch));
-    imgl_last_pyr.setFromImage(imgl_last_v, pyramid_level);
+    //    imgl_last_pyr.setFromImage(imgl_last_v, pyramid_level);
   }
+
+  // Checkpoint 1
+  auto ckp1 = std::chrono::high_resolution_clock::now();
+  double t1 = std::chrono::duration_cast<std::chrono::nanoseconds>(ckp1 - start)
+                  .count();
+  total_t1 += t1 / 1e9;
 
   MatchData md_stereo;
   LandmarkMatchData md;
@@ -1131,10 +1151,6 @@ bool next_step() {
 
   // 1st: Flow from last frame to current frame
   MatchData md_last;
-  auto ckp1 = std::chrono::high_resolution_clock::now();
-  double t1 = std::chrono::duration_cast<std::chrono::nanoseconds>(ckp1 - start)
-                  .count();
-  total_t1 += t1 / 1e9;
 
   /// Do Optical Flow here
   if (current_frame > 0) {
@@ -1165,17 +1181,18 @@ bool next_step() {
   //    take_keyframe = true;
   //  }
 
-  auto ckp3 = std::chrono::high_resolution_clock::now();
-  double t3 =
-      std::chrono::duration_cast<std::chrono::nanoseconds>(ckp3 - ckp2).count();
-  total_t3 += t3 / 1e9;
-
   if (take_keyframe) {
     size_t new_kps_added = add_flows_on_grids(
         imgl, kdl, num_features_per_image, num_bin_x, num_bin_y,
         empty_cells_thresh, last_frame_num_filled_cells);
 
     new_kps += new_kps_added;
+
+    auto ckp3 = std::chrono::high_resolution_clock::now();
+    double t3 =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(ckp3 - ckp2)
+            .count();
+    total_t3 += t3 / 1e9;
 
     // Reset some counter
     num_consecutive_regular_frames = 0;
@@ -1193,9 +1210,7 @@ bool next_step() {
     md_stereo.T_i_j = T_0_1;
 
     /// Do Optical Flow here
-    //    std::unordered_map<FeatureId, Eigen::AffineCompact2f> l_r_transforms;
-    //    initialize_transforms(kdl, l_r_transforms);
-    matchOpticalFlow(imgl_v, imgr_v, kdl, kdr, md_stereo, pyramid_level,
+    matchOpticalFlow(imgl_v, imgr_v, kdl, kdr, md_stereo, stereo_pyramid_level,
                      backproject_distance_threshold2);
 
     auto ckp4 = std::chrono::high_resolution_clock::now();
@@ -1332,7 +1347,7 @@ bool next_step() {
 
     auto ckp6 = std::chrono::high_resolution_clock::now();
     double t6 =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(ckp6 - ckp3)
+        std::chrono::duration_cast<std::chrono::nanoseconds>(ckp6 - ckp2)
             .count();
     total_t6 += t6 / 1e9;
 

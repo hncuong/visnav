@@ -1,3 +1,35 @@
+/**
+BSD 3-Clause License
+
+Copyright (c) 2018, Vladyslav Usenko and Nikolaus Demmel.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this
+  list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+* Neither the name of the copyright holder nor the names of its
+  contributors may be used to endorse or promote products derived from
+  this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*/
+
 #ifndef OPTICAL_FLOW_UTILS_H
 #define OPTICAL_FLOW_UTILS_H
 
@@ -25,63 +57,32 @@
 
 #include <pangolin/image/managed_image.h>
 
-/// Import the image type from Basalt
-#include <visnav/image/image.h>
-#include <visnav/image/image_pyr.h>
-
 #include <Eigen/Dense>
 #include <sophus/se3.hpp>
 
-/// Additional packages for Optical Flow
-#include <visnav/image/image.h>
-#include <visnav/image/image_pyr.h>
-#include <visnav/patch.h>
-#include <sophus/se2.hpp>
-
-const int PYRAMID_LEVEL = 3;
-const int OF_TRACK_MAX_ITERATIONS = 20;
-
 namespace visnav {
-// Define type for OpticalFlow patch template
-typedef OpticalFlowPatch<float, Pattern50<float>> PatchT;
 
-// Add new keypoints to current exist keypoints in a frame
-// with new detected corners
-void add_keypoints(const pangolin::ManagedImage<uint8_t>& img_raw,
-                   KeypointsData& kd, int num_features) {
-  KeypointsData new_kd;
-  detectKeypoints(img_raw, new_kd, num_features);
-  std::cout << "Found " << new_kd.corners.size() << "- Expected "
-            << num_features << "\n";
-
-  // TODO Update to check overlap keypoints later
-  for (const auto& kp : new_kd.corners) {
-    kd.corners.emplace_back(kp);
-  }
-}
-
-// TODO Update this function
 // Use optical flow from a last frame to a new frame to establish
 //  1. keypoints in new frame
 //  2. match data between last frame and new frame
-void optical_flows_opencv(const pangolin::ManagedImage<uint8_t>& img_last,
-                          const pangolin::ManagedImage<uint8_t>& img_current,
-                          const KeypointsData& kd_last,
-                          KeypointsData& kd_current, MatchData& md,
-                          double distance_threshold, int pyramid_level) {
+void optical_flows_opencv(const pangolin::ManagedImage<uint8_t>& img_src,
+                          const pangolin::ManagedImage<uint8_t>& img_dest,
+                          const KeypointsData& kd_src, KeypointsData& kd_dest,
+                          MatchData& md, double distance_threshold,
+                          int pyramid_level) {
   // If last frame have empty corner
-  if (kd_last.corners.size() == 0) return;
+  if (kd_src.corners.size() == 0) return;
 
   // Create two frame and convert to Gray
-  cv::Mat old_frame(img_last.h, img_last.w, CV_8U, img_last.ptr);
-  cv::Mat frame(img_current.h, img_current.w, CV_8U, img_current.ptr);
+  cv::Mat old_frame(img_src.h, img_src.w, CV_8U, img_src.ptr);
+  cv::Mat frame(img_dest.h, img_dest.w, CV_8U, img_dest.ptr);
 
   // Keypoints data
   std::vector<cv::Point2f> p0, p1, ptmp;
-  p0.reserve(kd_last.corners.size());
-  p1.reserve(kd_last.corners.size());
-  for (size_t i = 0; i < kd_last.corners.size(); i++) {
-    p0.emplace_back(kd_last.corners.at(i).x(), kd_last.corners.at(i).y());
+  p0.reserve(kd_src.corners.size());
+  p1.reserve(kd_src.corners.size());
+  for (size_t i = 0; i < kd_src.corners.size(); i++) {
+    p0.emplace_back(kd_src.corners.at(i).x(), kd_src.corners.at(i).y());
   }
 
   // Optical Flows
@@ -111,7 +112,7 @@ void optical_flows_opencv(const pangolin::ManagedImage<uint8_t>& img_last,
   int match_id = 0;
   //  for (size_t i = 0; i < p1.size(); i++) {
   //    if (status[i] == 1) {
-  //      kd_current.corners.emplace_back(p1[i].x, p1[i].y);
+  //      kd_dest.corners.emplace_back(p1[i].x, p1[i].y);
   //      md.matches.emplace_back(i, match_id);
   //      match_id++;
   //    }
@@ -123,7 +124,7 @@ void optical_flows_opencv(const pangolin::ManagedImage<uint8_t>& img_last,
                            std::abs((ptmp[i] - p0[i]).y));
       Eigen::Vector2d right_keypoint(p1[i].x, p1[i].y);
 
-      kd_current.corners.push_back(right_keypoint);
+      kd_dest.corners.push_back(right_keypoint);
       if ((diff.allFinite()) && (diff.squaredNorm() < distance_threshold)) {
         md.matches.push_back(std::make_pair(i, match_id));
       }
@@ -131,7 +132,7 @@ void optical_flows_opencv(const pangolin::ManagedImage<uint8_t>& img_last,
     }
   }
   std::cout << "Do Bi-directional optical flow" << std::endl;
-  std::cout << "kd_current corner size: " << kd_current.corners.size()
+  std::cout << "kd_dest corner size: " << kd_dest.corners.size()
             << " md matches size: " << md.matches.size() << std::endl;
 }
 
@@ -576,188 +577,6 @@ void update_and_add_flows(const FrameCamId& fcid_last, const MatchData& md_last,
       current_flow_id++;
     }
   }
-}
-
-void initialize_transforms(
-    const KeypointsData& kdl,
-    std::unordered_map<FeatureId, Eigen::AffineCompact2f>& transforms) {
-  // Init transformation to track
-  for (size_t i = 0; i < kdl.corners.size(); i++) {
-    Eigen::AffineCompact2f tf;
-    tf.setIdentity();
-    tf.translation() = kdl.corners[i].cast<float>();
-    transforms.emplace(i, tf);
-  }
-}
-
-inline bool trackPointAtLevel(const visnav::Image<const uint8_t>& img_2,
-                              const PatchT& dp,
-                              Eigen::AffineCompact2f& transform) {
-  bool patch_valid = true;
-  int max_iterations = OF_TRACK_MAX_ITERATIONS;
-
-  for (int iteration = 0; patch_valid && iteration < max_iterations;
-       iteration++) {
-    typename PatchT::VectorP res;
-
-    typename PatchT::Matrix2P transformed_pat =
-        transform.linear().matrix() * dp.pattern2;
-    transformed_pat.colwise() += transform.translation();
-
-    bool valid = dp.residual(img_2, transformed_pat, res);
-
-    if (valid) {
-      typename PatchT::Vector3 inc = -dp.H_se2_inv_J_se2_T * res;
-      // std::cout << "Here..." << dp.H_se2_inv_J_se2_T << std::endl;
-      // std::cout << "Here..." << res << std::endl;
-      transform *= Sophus::SE2f::exp(inc).matrix();
-      // std::cout << "... And there" << std::endl;
-      const int filter_margin = 3;
-
-      if (!img_2.InBounds(transform.translation(), filter_margin))
-        patch_valid = false;
-    } else {
-      patch_valid = false;
-    }
-    // std::cout << "PATCH VALID: " << patch_valid << std::endl;
-  }
-
-  return patch_valid;
-}
-
-inline bool trackPoint(const visnav::ManagedImagePyr<uint8_t>& old_pyr,
-                       const visnav::ManagedImagePyr<uint8_t>& pyr,
-                       const size_t& num_levels,
-                       const Eigen::AffineCompact2f& old_transform,
-                       Eigen::AffineCompact2f& transform) {
-  bool patch_valid = true;
-
-  transform.linear().setIdentity();
-
-  for (int level = num_levels; level >= 0 && patch_valid; level--) {
-    const float scale = 1 << level;  // bit shift
-
-    transform.translation() /= scale;
-
-    PatchT p(old_pyr.lvl(level), old_transform.translation() / scale);
-
-    // Perform tracking on current level
-    patch_valid &= trackPointAtLevel(pyr.lvl(level), p, transform);
-
-    transform.translation() *= scale;
-  }
-
-  transform.linear() = old_transform.linear() * transform.linear();
-
-  return patch_valid;
-}
-
-void find_motion_consec(
-    const KeypointsData& kd, const visnav::ManagedImagePyr<uint8_t>& old_pyr,
-    const visnav::ManagedImagePyr<uint8_t>& pyr, const size_t& num_levels,
-    const double& distance_threshold,
-    std::unordered_map<FeatureId, Eigen::AffineCompact2f>& transforms) {
-  for (size_t i = 0; i < kd.corners.size(); i++) {
-    // const Eigen::Vector2d p2d = kd.corners[i];
-    Eigen::AffineCompact2f transform_1 = transforms[i];
-    // transform_1.setIdentity();
-    // transform_1.translation() += p2d.cast<float>();
-    Eigen::AffineCompact2f transform_2 = transform_1;
-    // std::cout << "BEFORE:\n" << i << std::endl;
-    // PatchT patch(img1, transform_1.translation());
-
-    transform_2.linear().setIdentity();
-    bool valid = trackPoint(old_pyr, pyr, num_levels, transform_1, transform_2);
-    bool flag = false;
-    transform_2.linear() = transform_1.linear() * transform_2.linear();
-    // std::cout << "AFTER:\n" << i << std::endl;
-    // std::cout << "NEW TRANSFORMS:\n" << transforms[i].matrix() << std::endl;
-
-    if (valid) {
-      Eigen::AffineCompact2f transform_1_recovered = transform_2;
-      // PatchT patch2(img2, transform_2.translation());
-
-      transform_1_recovered.linear().setIdentity();
-      valid = trackPoint(pyr, old_pyr, num_levels, transform_2,
-                         transform_1_recovered);
-      transform_1_recovered.linear() =
-          transform_2.linear() * transform_1_recovered.linear();
-
-      if (valid) {
-        float dist2 =
-            (transform_1.translation() - transform_1_recovered.translation())
-                .squaredNorm();
-
-        if (dist2 < distance_threshold) {
-          transforms[i] = transform_2;
-          flag = true;
-        }
-      }
-    }
-
-    // Delete transform not under threshol
-    if (!flag) {
-      transforms.erase(i);
-    }
-  }
-}
-
-/**
- * @brief match_optical: Fill keypoints and matches with transform
- * @param kdr keypoints in target frame to be filled
- * @param transforms 2D affine transforms
- * @param matches matches from source to target frame
- */
-void match_optical(
-    KeypointsData& kdr,
-    const std::unordered_map<FeatureId, Eigen::AffineCompact2f>& transforms,
-    std::vector<std::pair<int, int>>& matches) {
-  kdr.corners.clear();
-  matches.clear();
-  int i = 0;
-  int j = 0;
-  std::unordered_map<FeatureId, TrackId> updated_tracks;
-  for (const auto& t : transforms) {
-    // std::cout << "SEG FAULT?" << std::endl;
-    // if(t.second.data)
-    kdr.corners.push_back(t.second.translation().cast<double>());
-    matches.emplace_back(t.first, i);
-    i++;
-  }
-}
-
-/**
- * @brief matchOpticalFlow: Use Optical flows to find matches and keypoints in
- * target frame from a source frame
- * @param img_last
- * @param img_current
- * @param kd_last
- * @param kd_current
- * @param md
- * @param pyramid_level
- * @param distance_threshold
- * @param transforms
- */
-void matchOpticalFlow(const visnav::ManagedImage<uint8_t>& img_last,
-                      const visnav::ManagedImage<uint8_t>& img_current,
-                      const KeypointsData& kd_last, KeypointsData& kd_current,
-                      MatchData& md, int pyramid_level,
-                      double distance_threshold) {
-  // Init transform
-  std::unordered_map<FeatureId, Eigen::AffineCompact2f> transforms;
-  initialize_transforms(kd_last, transforms);
-
-  // Create Image pyramid for two image pairs
-  visnav::ManagedImagePyr<uint8_t> img_last_pyr, img_current_pyr;
-  img_last_pyr.setFromImage(img_last, pyramid_level);
-  img_current_pyr.setFromImage(img_current, pyramid_level);
-
-  // Calculate transformation
-  find_motion_consec(kd_last, img_last_pyr, img_current_pyr, pyramid_level,
-                     distance_threshold, transforms);
-
-  // Fill keypoints in target frame and maches
-  match_optical(kd_current, transforms, md.matches);
 }
 
 void project_landmarks_of(

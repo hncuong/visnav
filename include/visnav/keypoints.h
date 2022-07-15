@@ -148,6 +148,21 @@ void detectKeypoints(const pangolin::ManagedImage<uint8_t>& img_raw,
   }
 }
 
+// Add new keypoints to current exist keypoints in a frame
+// with new detected corners
+void add_keypoints(const pangolin::ManagedImage<uint8_t>& img_raw,
+                   KeypointsData& kd, int num_features) {
+  KeypointsData new_kd;
+  detectKeypoints(img_raw, new_kd, num_features);
+  std::cout << "Found " << new_kd.corners.size() << "- Expected "
+            << num_features << "\n";
+
+  // TODO Update to check overlap keypoints later
+  for (const auto& kp : new_kd.corners) {
+    kd.corners.emplace_back(kp);
+  }
+}
+
 void computeAngles(const pangolin::ManagedImage<uint8_t>& img_raw,
                    KeypointsData& kd, bool rotate_features) {
   kd.corner_angles.resize(kd.corners.size());

@@ -64,6 +64,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <visnav/vo_utils.h>
 #include <visnav/optical_flow_utils.h>
 #include <visnav/of_grid.h>
+#include <visnav/optical_flow.h>
 
 #include <visnav/gui_helper.h>
 #include <visnav/tracks.h>
@@ -1136,29 +1137,36 @@ bool next_step() {
   total_t2 += t2 / 1e9;
 
   // Add to all flows for visualization
-  update_and_add_flows(fcid_last, md_last, all_flows, next_flow_id);
+  //  update_and_add_flows(fcid_last, md_last, all_flows, next_flow_id);
 
   /// Examine to add new flows by grids
   /// If number of empty cells cross a threshold * total_cells
   /// Then try to create new flows in empty cells
   double empty_cells_thresh = 0.99;
-  size_t new_kps_added = add_flows_on_grids(
-      imgl, kdl, num_features_per_image, num_bin_x, num_bin_y,
-      empty_cells_thresh, last_frame_num_filled_cells);
+  //  size_t new_kps_added = add_flows_on_grids(
+  //      imgl, kdl, num_features_per_image, num_bin_x, num_bin_y,
+  //      empty_cells_thresh, last_frame_num_filled_cells);
 
-  new_kps += new_kps_added;
+  //  new_kps += new_kps_added;
   //  if (new_kps >= new_kf_num_new_keypoints) {
   //    std::cout << "\tAccumulate " << new_kps
   //              << " new keypoints. Take keyframe.\n";
   //    take_keyframe = true;
   //  }
 
-  auto ckp3 = std::chrono::high_resolution_clock::now();
-  double t3 =
-      std::chrono::duration_cast<std::chrono::nanoseconds>(ckp3 - ckp2).count();
-  total_t3 += t3 / 1e9;
-
   if (take_keyframe) {
+    size_t new_kps_added = add_flows_on_grids(
+        imgl, kdl, num_features_per_image, num_bin_x, num_bin_y,
+        empty_cells_thresh, last_frame_num_filled_cells);
+
+    new_kps += new_kps_added;
+
+    auto ckp3 = std::chrono::high_resolution_clock::now();
+    double t3 =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(ckp3 - ckp2)
+            .count();
+    total_t3 += t3 / 1e9;
+
     // Reset some counter
     num_consecutive_regular_frames = 0;
     take_keyframe = false;
@@ -1306,7 +1314,7 @@ bool next_step() {
 
     auto ckp6 = std::chrono::high_resolution_clock::now();
     double t6 =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(ckp6 - ckp3)
+        std::chrono::duration_cast<std::chrono::nanoseconds>(ckp6 - ckp2)
             .count();
     total_t6 += t6 / 1e9;
 
