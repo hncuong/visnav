@@ -214,6 +214,9 @@ double total_t4 = 0.;
 double total_t5 = 0.;
 double total_t6 = 0.;
 
+// RunID
+int run_id = 0;
+
 ///////////////////////////////////////////////////////////////////////////////
 /// GUI parameters
 ///////////////////////////////////////////////////////////////////////////////
@@ -337,12 +340,14 @@ int main(int argc, char** argv) {
   app.add_option("--kf_frequency", kf_frequency,
                  "Number of max consecutive regular frames: " +
                      std::to_string(kf_frequency));
+
   // For Optical flow pyramid
   app.add_option("--pyramid-lv", df_pyramid_lv,
                  "Number of pyramid lv " + std::to_string(df_pyramid_lv));
   app.add_option("--stereo-pyramid-lv", stereo_pyramid_level,
                  "Number of pyramid lv for stereo matching " +
                      std::to_string(stereo_pyramid_level));
+
   // For adding keypoints
   app.add_option("--nbin-x", num_bin_x,
                  "Number bins on x axis " + std::to_string(num_bin_x));
@@ -351,9 +356,13 @@ int main(int argc, char** argv) {
   app.add_option("--new-kps-kf", new_kf_num_new_keypoints,
                  "Number of accum new kps to take new kf " +
                      std::to_string(new_kf_num_new_keypoints));
+
   // Use Basalt or Lucas for OF
   app.add_option("--use-bs-fw", use_basalt_forward, "use_basalt_forward");
   app.add_option("--use-bs-st", use_basalt_stereo, "use_basalt_stereo");
+
+  // Run ID
+  app.add_option("--run-id", run_id, "Run ID.");
 
   try {
     app.parse(argc, argv);
@@ -511,6 +520,24 @@ int main(int argc, char** argv) {
             << total_t3 << " " << total_t4 << " " << total_t5 << " " << total_t6
             << " \n";
   std::cout << total_t10 << "\n";
+
+  // Save config and run times and num keyframes to file
+  // What to save backproject_distance_threshold_in_pixels, pyramid_level,
+  // num_bin_x, num_bin_y, use_basalt_forward, use_basalt_stereo
+  // Runtime total, num keyframes
+  std::ofstream stat_file("results/of_basalt.txt", std::ios_base::app);
+  double run_time =
+      total_t1 + total_t2 + total_t3 + total_t4 + total_t5 + total_t6;
+  size_t num_kfs = all_cameras.size() + cameras.size() / 2;
+  stat_file << run_id << "\t" << backproject_distance_threshold_in_pixels
+            << "\t" << pyramid_level << "\t" << stereo_pyramid_level << "\t"
+            << num_bin_x << "\t" << num_bin_y << "\t" << use_basalt_forward
+            << "\t" << use_basalt_stereo << "\t" << total_t1 << "\t" << total_t2
+            << "\t" << total_t3 << "\t" << total_t4 << "\t" << total_t5 << "\t"
+            << total_t6 << "\t" << run_time << "\t" << num_kfs << " \n";
+
+  stat_file.close();
+
   /// Save cemeras trajectory for evaluation
   save_trajectory();
   save_all_trajectory();
@@ -1472,7 +1499,10 @@ void save_trajectory() {
   all_cameras[last_fcidl] = current_cam;
 
   // Store the trajectory over
-  std::ofstream trajectory_file("stamped_optical_flow_odometry_trajectory.txt");
+  auto filename = "results/stamped_trajectory_optical_flow_" +
+                  std::to_string(run_id) + ".txt";
+  std::ofstream trajectory_file(filename);
+
   trajectory_file << std::fixed;
 
   if (trajectory_file.is_open()) {
@@ -1495,9 +1525,7 @@ void save_trajectory() {
                       << quaternion_coefficients.w() << "\n";
     }
     trajectory_file.close();
-    std::cout
-        << "Trajectory is saved to stamped_optical_flow_odometry_trajectory.txt"
-        << std::endl;
+    std::cout << "Trajectory is saved to " << filename << std::endl;
   } else {
     std::cout << "Fail to open the file" << std::endl;
   }
@@ -1505,8 +1533,10 @@ void save_trajectory() {
 
 void save_all_trajectory() {
   // Store the trajectory over
-  std::ofstream trajectory_file(
-      "stamped_optical_flow_odometry_trajectory_all.txt");
+  auto filename = "results/stamped_trajectory_optical_flow_all_" +
+                  std::to_string(run_id) + ".txt";
+  std::ofstream trajectory_file(filename);
+
   trajectory_file << std::fixed;
 
   if (trajectory_file.is_open()) {
@@ -1529,9 +1559,7 @@ void save_all_trajectory() {
                       << quaternion_coefficients.w() << "\n";
     }
     trajectory_file.close();
-    std::cout << "Trajectory is saved to "
-                 "stamped_optical_flow_odometry_trajectory_all.txt"
-              << std::endl;
+    std::cout << "Trajectory is saved to " << filename << std::endl;
   } else {
     std::cout << "Fail to open the file" << std::endl;
   }

@@ -152,6 +152,9 @@ double total_t4 = 0.;
 double total_t5 = 0.;
 double total_t6 = 0.;
 
+// Run Id
+int run_id = 0;
+
 ///////////////////////////////////////////////////////////////////////////////
 /// GUI parameters
 ///////////////////////////////////////////////////////////////////////////////
@@ -250,6 +253,9 @@ int main(int argc, char** argv) {
                  "Dataset path. Default: " + dataset_path);
   app.add_option("--cam-calib", cam_calib,
                  "Path to camera calibration. Default: " + cam_calib);
+
+  // Run ID
+  app.add_option("--run-id", run_id, "Run ID.");
 
   try {
     app.parse(argc, argv);
@@ -393,6 +399,23 @@ int main(int argc, char** argv) {
   std::cout << "\nTIME MEASUREMENTS: " << total_t1 << " " << total_t2 << " "
             << total_t3 << " " << total_t4 << " " << total_t5 << " " << total_t6
             << " \n";
+
+  // Save config and run times and num keyframes to file
+  // What to save backproject_distance_threshold_in_pixels, pyramid_level,
+  // num_bin_x, num_bin_y, use_basalt_forward, use_basalt_stereo
+  // Runtime total, num keyframes
+  std::ofstream stat_file("results/odometry.txt", std::ios_base::app);
+  double run_time =
+      total_t1 + total_t2 + total_t3 + total_t4 + total_t5 + total_t6;
+  size_t num_kfs = all_cameras.size() + cameras.size() / 2;
+  stat_file << run_id << "\t" << total_t1 << "\t" << total_t2 << "\t"
+            << total_t3 << "\t" << total_t4 << "\t" << total_t5 << "\t"
+            << total_t6 << "\t" << run_time << "\t" << num_kfs << " \n";
+
+  stat_file.close();
+
+  save_trajectory();
+  save_all_trajectory();
 
   return 0;
 }
@@ -1157,7 +1180,10 @@ void save_trajectory() {
   all_cameras[last_fcidl] = current_cam;
 
   // Store the trajectory over
-  std::ofstream trajectory_file("stamped_odometry_trajectory.txt");
+  auto filename =
+      "results/stamped_odometry_trajectory_" + std::to_string(run_id) + ".txt";
+  std::ofstream trajectory_file(filename);
+  //  std::ofstream trajectory_file("stamped_odometry_trajectory.txt");
   trajectory_file << std::fixed;
 
   if (trajectory_file.is_open()) {
@@ -1189,7 +1215,9 @@ void save_trajectory() {
 
 void save_all_trajectory() {
   // Store the trajectory over
-  std::ofstream trajectory_file("stamped_odometry_trajectory_all.txt");
+  auto filename = "results/stamped_odometry_trajectory_all_" +
+                  std::to_string(run_id) + ".txt";
+  std::ofstream trajectory_file(filename);
   trajectory_file << std::fixed;
 
   if (trajectory_file.is_open()) {
