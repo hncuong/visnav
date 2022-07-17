@@ -35,6 +35,14 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <set>
 #include <vector>
 
+#include <thread>
+
+#include <sophus/se2.hpp>
+
+#include <tbb/blocked_range.h>
+#include <tbb/concurrent_unordered_map.h>
+#include <tbb/parallel_for.h>
+
 #include <visnav/common_types.h>
 #include <visnav/calibration.h>
 #include <visnav/keypoints.h>
@@ -151,7 +159,7 @@ inline bool trackPoint(const visnav::ManagedImagePyr<uint8_t>& old_pyr,
 }
 
 /**
- * @brief find_motion_consec
+ * @brief trackPoints
  * @param kd
  * @param old_pyr
  * @param pyr
@@ -159,54 +167,64 @@ inline bool trackPoint(const visnav::ManagedImagePyr<uint8_t>& old_pyr,
  * @param distance_threshold
  * @param transforms
  */
-void find_motion_consec(
+void trackPoints(
     const KeypointsData& kd, const visnav::ManagedImagePyr<uint8_t>& old_pyr,
     const visnav::ManagedImagePyr<uint8_t>& pyr, const size_t& num_levels,
     const double& distance_threshold,
     std::unordered_map<FeatureId, Eigen::AffineCompact2f>& transforms) {
-  for (size_t i = 0; i < kd.corners.size(); i++) {
-    // const Eigen::Vector2d p2d = kd.corners[i];
-    Eigen::AffineCompact2f transform_1 = transforms[i];
-    // transform_1.setIdentity();
-    // transform_1.translation() += p2d.cast<float>();
-    Eigen::AffineCompact2f transform_2 = transform_1;
-    // std::cout << "BEFORE:\n" << i << std::endl;
-    // PatchT patch(img1, transform_1.translation());
+  int num_points = kd.corners.size();
 
-    transform_2.linear().setIdentity();
-    bool valid = trackPoint(old_pyr, pyr, num_levels, transform_1, transform_2);
-    bool flag = false;
-    transform_2.linear() = transform_1.linear() * transform_2.linear();
-    // std::cout << "AFTER:\n" << i << std::endl;
-    // std::cout << "NEW TRANSFORMS:\n" << transforms[i].matrix() << std::endl;
+  auto compute_func = [&](const tbb::blocked_range<size_t>& range) {
+    for (size_t i = range.begin(); i != range.end(); ++i) {
+      // const Eigen::Vector2d p2d = kd.corners[i];
+      Eigen::AffineCompact2f transform_1 = transforms[i];
+      // transform_1.setIdentity();
+      // transform_1.translation() += p2d.cast<float>();
+      Eigen::AffineCompact2f transform_2 = transform_1;
+      // std::cout << "BEFORE:\n" << i << std::endl;
+      // PatchT patch(img1, transform_1.translation());
 
-    if (valid) {
-      Eigen::AffineCompact2f transform_1_recovered = transform_2;
-      // PatchT patch2(img2, transform_2.translation());
-
-      transform_1_recovered.linear().setIdentity();
-      valid = trackPoint(pyr, old_pyr, num_levels, transform_2,
-                         transform_1_recovered);
-      transform_1_recovered.linear() =
-          transform_2.linear() * transform_1_recovered.linear();
+      transform_2.linear().setIdentity();
+      bool valid =
+          trackPoint(old_pyr, pyr, num_levels, transform_1, transform_2);
+      bool flag = false;
+      transform_2.linear() = transform_1.linear() * transform_2.linear();
+      // std::cout << "AFTER:\n" << i << std::endl;
+      // std::cout << "NEW TRANSFORMS:\n" << transforms[i].matrix() <<
+      // std::endl;
 
       if (valid) {
-        float dist2 =
-            (transform_1.translation() - transform_1_recovered.translation())
-                .squaredNorm();
+        Eigen::AffineCompact2f transform_1_recovered = transform_2;
+        // PatchT patch2(img2, transform_2.translation());
 
-        if (dist2 < distance_threshold) {
-          transforms[i] = transform_2;
-          flag = true;
+        transform_1_recovered.linear().setIdentity();
+        valid = trackPoint(pyr, old_pyr, num_levels, transform_2,
+                           transform_1_recovered);
+        transform_1_recovered.linear() =
+            transform_2.linear() * transform_1_recovered.linear();
+
+        if (valid) {
+          float dist2 =
+              (transform_1.translation() - transform_1_recovered.translation())
+                  .squaredNorm();
+
+          if (dist2 < distance_threshold) {
+            transforms[i] = transform_2;
+            flag = true;
+          }
         }
       }
-    }
 
-    // Delete transform not under threshol
-    if (!flag) {
-      transforms.erase(i);
+      // Delete transform not under threshol
+      if (!flag) {
+        transforms.erase(i);
+      }
     }
-  }
+  };
+
+  tbb::blocked_range<size_t> range(0, num_points);
+
+  tbb::parallel_for(range, compute_func);
 }
 
 /**
@@ -260,8 +278,8 @@ void matchOpticalFlow(const visnav::ManagedImage<uint8_t>& img_src,
   img_dest_pyr.setFromImage(img_dest, pyramid_level);
 
   // Calculate transformation
-  find_motion_consec(kd_src, img_src_pyr, img_dest_pyr, pyramid_level,
-                     distance_threshold, transforms);
+  trackPoints(kd_src, img_src_pyr, img_dest_pyr, pyramid_level,
+              distance_threshold, transforms);
 
   // Fill keypoints in target frame and maches
   match_optical(kd_dest, transforms, md.matches);
