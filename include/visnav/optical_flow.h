@@ -105,10 +105,9 @@ inline bool trackPointAtLevel(const visnav::Image<const uint8_t>& img_2,
 
     if (valid) {
       typename PatchT::Vector3 inc = -dp.H_se2_inv_J_se2_T * res;
-      // std::cout << "Here..." << dp.H_se2_inv_J_se2_T << std::endl;
-      // std::cout << "Here..." << res << std::endl;
+
       transform *= Sophus::SE2f::exp(inc).matrix();
-      // std::cout << "... And there" << std::endl;
+
       const int filter_margin = 3;
 
       if (!img_2.InBounds(transform.translation(), filter_margin))
@@ -176,26 +175,18 @@ void trackPoints(
 
   auto compute_func = [&](const tbb::blocked_range<size_t>& range) {
     for (size_t i = range.begin(); i != range.end(); ++i) {
-      // const Eigen::Vector2d p2d = kd.corners[i];
       Eigen::AffineCompact2f transform_1 = transforms[i];
-      // transform_1.setIdentity();
-      // transform_1.translation() += p2d.cast<float>();
+
       Eigen::AffineCompact2f transform_2 = transform_1;
-      // std::cout << "BEFORE:\n" << i << std::endl;
-      // PatchT patch(img1, transform_1.translation());
 
       transform_2.linear().setIdentity();
       bool valid =
           trackPoint(old_pyr, pyr, num_levels, transform_1, transform_2);
       bool flag = false;
       transform_2.linear() = transform_1.linear() * transform_2.linear();
-      // std::cout << "AFTER:\n" << i << std::endl;
-      // std::cout << "NEW TRANSFORMS:\n" << transforms[i].matrix() <<
-      // std::endl;
 
       if (valid) {
         Eigen::AffineCompact2f transform_1_recovered = transform_2;
-        // PatchT patch2(img2, transform_2.translation());
 
         transform_1_recovered.linear().setIdentity();
         valid = trackPoint(pyr, old_pyr, num_levels, transform_2,
@@ -215,7 +206,7 @@ void trackPoints(
         }
       }
 
-      // Delete transform not under threshol
+      // Delete transform not under threshold
       if (!flag) {
         transforms.erase(i);
       }
@@ -243,8 +234,6 @@ void match_optical(
   int j = 0;
   std::unordered_map<FeatureId, TrackId> updated_tracks;
   for (const auto& t : transforms) {
-    // std::cout << "SEG FAULT?" << std::endl;
-    // if(t.second.data)
     kdr.corners.push_back(t.second.translation().cast<double>());
     matches.emplace_back(t.first, i);
     i++;
