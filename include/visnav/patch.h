@@ -135,7 +135,7 @@ struct OpticalFlowPatch {
   }
 
   Vector2 pos = Vector2::Zero();
-  VectorP data = Vector2::Zero();  // negative if the point is not valid
+  VectorP data = VectorP::Zero();  // negative if the point is not valid
 
   // MatrixP3 J_se2;  // total jacobian with respect to se2 warp
   // Matrix3 H_se2_inv;
