@@ -414,6 +414,23 @@ int main(int argc, char** argv) {
 
   stat_file.close();
 
+  // Save flow length
+  std::ofstream flow_length("results/keypoints_lifetime_" +
+                            std::to_string(run_id) + ".txt");
+  for (const auto& kv : landmarks) {
+    flow_length << kv.first << ","
+                << kv.second.last_frame_obs - kv.second.first_frame_obs + 1
+                << "\n";
+  }
+
+  for (const auto& kv : old_landmarks) {
+    flow_length << kv.first << ","
+                << kv.second.last_frame_obs - kv.second.first_frame_obs + 1
+                << "\n";
+  }
+  flow_length.close();
+
+  /// Save trajectory
   save_trajectory();
   save_all_trajectory();
 
@@ -936,6 +953,12 @@ bool next_step() {
     localize_camera(current_pose, calib_cam.intrinsics[0], kdl, landmarks,
                     reprojection_error_pnp_inlier_threshold_pixel, md);
 
+    for (const auto& kv : md.inliers) {
+      const auto& trackId = kv.second;
+      // Add obs
+      landmarks.at(trackId).last_frame_obs = fcidl.frame_id;
+    }
+
     current_pose = md.T_w_c;
     Camera current_cam;
     current_cam.T_w_c = md.T_w_c;
@@ -1027,6 +1050,12 @@ bool next_step() {
 
     localize_camera(current_pose, calib_cam.intrinsics[0], kdl, landmarks,
                     reprojection_error_pnp_inlier_threshold_pixel, md);
+
+    for (const auto& kv : md.inliers) {
+      const auto& trackId = kv.second;
+      // Add obs
+      landmarks.at(trackId).last_frame_obs = fcidl.frame_id;
+    }
 
     current_pose = md.T_w_c;
     Camera current_cam;

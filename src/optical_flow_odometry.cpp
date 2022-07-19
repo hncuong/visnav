@@ -167,7 +167,7 @@ pangolin::ManagedImage<uint8_t> imgl_last;
 
 /// Flows
 Flows flows;
-Flows all_flows;
+// Flows flows;
 
 /// Next flow id to add to all flows
 TrackId next_flow_id = 0;
@@ -538,6 +538,34 @@ int main(int argc, char** argv) {
 
   stat_file.close();
 
+  // Save flow length
+  std::ofstream flow_length("results/flow_length_" + std::to_string(run_id) +
+                            ".txt");
+  for (const auto& kv : flows) {
+    flow_length << kv.first << "," << kv.second.length << "\n";
+  }
+
+  for (const auto& kv : old_landmarks) {
+    flow_length << kv.first << "," << kv.second.length << "\n";
+  }
+  flow_length.close();
+
+  // Save kps life
+  std::ofstream kps_lifetime("results/keypoints_lifetime_of_" +
+                             std::to_string(run_id) + ".txt");
+  for (const auto& kv : flows) {
+    kps_lifetime << kv.first << ","
+                 << kv.second.last_frame_obs - kv.second.first_frame_obs + 1
+                 << "\n";
+  }
+
+  for (const auto& kv : old_landmarks) {
+    kps_lifetime << kv.first << ","
+                 << kv.second.last_frame_obs - kv.second.first_frame_obs + 1
+                 << "\n";
+  }
+  kps_lifetime.close();
+
   /// Save cemeras trajectory for evaluation
   save_trajectory();
   save_all_trajectory();
@@ -598,12 +626,12 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
     /// TODO Change to all flows for visualization
     /// Maybe no 3d correspondent yet
     /// Merge later if needed
-    size_t num_flows = all_flows.size();
+    size_t num_flows = flows.size();
     /// Check alive flows and draw circle around it
     std::vector<TrackId> aliveFlows;
     int total_flows_length = 0;
 
-    for (const auto& kv : all_flows) {
+    for (const auto& kv : flows) {
       if (kv.second.alive) {
         aliveFlows.emplace_back(kv.first);
         total_flows_length += kv.second.flow.size();
@@ -636,13 +664,13 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
     // Check for liveness
     std::vector<TrackId> flowsToDiscard;
     for (const auto& flow_id : flows_to_show) {
-      if (all_flows.count(flow_id.first) == 0) {
+      if (flows.count(flow_id.first) == 0) {
         // If flow disappear
         flowsToDiscard.emplace_back(flow_id.first);
       } else {
         // Or not alive anymore
-        if (!all_flows.at(flow_id.first).alive)
-          //// if (all_flows.at(flow_id.first).flow.count(fcid) == 0) // Wrong
+        if (!flows.at(flow_id.first).alive)
+          //// if (flows.at(flow_id.first).flow.count(fcid) == 0) // Wrong
           // since there are left and right frame
           flowsToDiscard.emplace_back(flow_id.first);
       }
@@ -662,7 +690,7 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
       // Pick random flows
       // First choose alive flows that not show yet
       std::vector<TrackId> flowsToPick;
-      for (const auto& kv : all_flows) {
+      for (const auto& kv : flows) {
         if (flows_to_show.count(kv.first) == 0 && kv.second.alive) {
           flowsToPick.emplace_back(kv.first);
         }
@@ -708,10 +736,10 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
       glColor3f(color_code[0], color_code[1], color_code[2]);
 
       // Only select some flows
-      if (all_flows.count(trackId) == 0 || !all_flows.at(trackId).alive) {
+      if (flows.count(trackId) == 0 || !flows.at(trackId).alive) {
         flows_to_discard.emplace_back(trackId);
       } else {
-        const auto& flow = all_flows.at(trackId);
+        const auto& flow = flows.at(trackId);
 
         // If flow exist in the frame
         // Draw the point in the current frame
@@ -1273,6 +1301,12 @@ bool next_step() {
         current_pose, calib_cam.intrinsics[0], kdl, flows,
         reprojection_error_pnp_inlier_threshold_pixel, md);
 
+    for (const auto& kv : md.inliers) {
+      const auto& trackId = kv.second;
+      // Add obs
+      flows.at(trackId).last_frame_obs = fcidl.frame_id;
+    }
+
     current_pose = md.T_w_c;
 
     cameras[fcidl].T_w_c = current_pose;
@@ -1339,6 +1373,12 @@ bool next_step() {
     localize_camera_optical_flow(
         current_pose, calib_cam.intrinsics[0], kdl, flows,
         reprojection_error_pnp_inlier_threshold_pixel, md);
+
+    for (const auto& kv : md.inliers) {
+      const auto& trackId = kv.second;
+      // Add obs
+      flows.at(trackId).last_frame_obs = fcidl.frame_id;
+    }
 
     // Update match for next round
     last_md_featureToTrack = md;

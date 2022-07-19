@@ -199,6 +199,10 @@ struct Landmark {
   /// Outlier observations in the current map.
   /// This is a subset of the original feature track.
   FeatureTrack outlier_obs;
+
+  /// First Frame and Last frame observe
+  FrameId first_frame_obs;
+  FrameId last_frame_obs;
 };
 
 /// Flows in the map
@@ -225,6 +229,10 @@ struct Flow {
 
   /// Is the flow have a correspond 3d landmark
   bool is_landmark;
+
+  /// First Frame and Last frame observe
+  FrameId first_frame_obs;
+  FrameId last_frame_obs;
 };
 
 /// collection {imageId => Camera} for all cameras in the map

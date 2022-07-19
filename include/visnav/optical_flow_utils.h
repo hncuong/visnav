@@ -322,6 +322,8 @@ void add_new_landmarks_optical_flow(
     const auto& featureId_left = feature_n_Track.first;
     const auto& trackId = feature_n_Track.second;
 
+    flows.at(trackId).last_frame_obs = fcidl.frame_id;
+
     // Add observation
     flows.at(trackId).obs.emplace(fcidl, featureId_left);
     if (stereo_inliers_map.count(featureId_left) > 0) {
@@ -373,6 +375,9 @@ void add_new_landmarks_optical_flow(
       // Add flow obs
       flow.flow.emplace(fcidl, featureId_lr.first);
       flow.length = 1;
+
+      flow.first_frame_obs = fcidl.frame_id;
+      flow.last_frame_obs = fcidl.frame_id;
 
       // Add new landmark
       // and flow
