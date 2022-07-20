@@ -279,6 +279,7 @@ void add_new_landmarks(const FrameCamId fcidl, const FrameCamId fcidr,
   std::unordered_map<FeatureId, FeatureId> stereo_inliers_map(
       stereo_inliers.begin(), stereo_inliers.end());
   const FeatureId LANDMARK_EXIST = -1;
+  std::set<FeatureId> featureExistInflows;
 
   // For each landmark inliers add observer
   for (const auto& feature_n_Track : landmark_inliers) {
@@ -292,7 +293,8 @@ void add_new_landmarks(const FrameCamId fcidl, const FrameCamId fcidr,
                                         stereo_inliers_map.at(featureId_left));
       // Set this in stereo_inliers_map to -1 to mark that it already exist in
       // landmark
-      stereo_inliers_map.at(featureId_left) = LANDMARK_EXIST;
+      //      stereo_inliers_map.at(featureId_left) = LANDMARK_EXIST;
+      featureExistInflows.emplace(featureId_left);
     }
   }
 
@@ -319,7 +321,7 @@ void add_new_landmarks(const FrameCamId fcidl, const FrameCamId fcidr,
   for (size_t i = 0; i < stereo_inliers.size(); i++) {
     const auto& featureId_lr = stereo_inliers.at(i);
     // If observer is not in landmark
-    if (stereo_inliers_map.at(featureId_lr.first) != LANDMARK_EXIST) {
+    if (featureExistInflows.count(featureId_lr.first) == 0) {
       opengv::point_t p =
           T_w_c * opengv::triangulation::triangulate(adapter, i);
 
@@ -327,6 +329,8 @@ void add_new_landmarks(const FrameCamId fcidl, const FrameCamId fcidr,
       lm.p = p;
       lm.obs.emplace(fcidl, featureId_lr.first);
       lm.obs.emplace(fcidr, featureId_lr.second);
+      lm.first_frame_obs = fcidl.frame_id;
+      lm.last_frame_obs = fcidl.frame_id;
 
       // Add new landmark
       landmarks.emplace(next_landmark_id, lm);
@@ -336,8 +340,8 @@ void add_new_landmarks(const FrameCamId fcidl, const FrameCamId fcidr,
 }
 
 void remove_old_keyframes(const FrameCamId fcidl, const int max_num_kfs,
-                          Cameras& cameras, Landmarks& landmarks,
-                          Landmarks& old_landmarks,
+                          Cameras& cameras, Cameras& old_cameras,
+                          Landmarks& landmarks, Landmarks& old_landmarks,
                           std::set<FrameId>& kf_frames) {
   kf_frames.emplace(fcidl.frame_id);
 
@@ -356,6 +360,7 @@ void remove_old_keyframes(const FrameCamId fcidl, const int max_num_kfs,
     auto min_frameId = *kf_frames.begin();
     FrameCamId min_fcidl = FrameCamId(min_frameId, 0);
     FrameCamId min_fcidr = FrameCamId(min_frameId, 1);
+    old_cameras[min_fcidl] = cameras.at(min_fcidl);
 
     // Remove from cameras
     if (cameras.count(min_fcidl) > 0) cameras.erase(min_fcidl);

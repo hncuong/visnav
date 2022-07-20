@@ -116,6 +116,9 @@ using FeatureId = int;
 /// tracks;
 using TrackId = int64_t;
 
+/// Ids for flows (the same as track)
+using FlowId = int64_t;
+
 /// keypoint positions and descriptors for an image
 struct KeypointsData {
   /// collection of 2d corner points (indexed by FeatureId)
@@ -196,6 +199,40 @@ struct Landmark {
   /// Outlier observations in the current map.
   /// This is a subset of the original feature track.
   FeatureTrack outlier_obs;
+
+  /// First Frame and Last frame observe
+  FrameId first_frame_obs;
+  FrameId last_frame_obs;
+};
+
+/// Flows in the map
+struct Flow {
+  /// 3d position in world coordinates
+  Eigen::Vector3d p;
+
+  /// Inlier observations in the current map.
+  /// This is a subset of the original feature track.
+  FeatureTrack obs;
+
+  /// Outlier observations in the current map.
+  /// This is a subset of the original feature track.
+  FeatureTrack outlier_obs;
+
+  /// Flow as observations include all frame to current frame
+  FeatureTrack flow;
+
+  /// Length of the flows
+  size_t length;
+
+  /// State of the flow, dead of alive
+  bool alive;
+
+  /// Is the flow have a correspond 3d landmark
+  bool is_landmark;
+
+  /// First Frame and Last frame observe
+  FrameId first_frame_obs;
+  FrameId last_frame_obs;
 };
 
 /// collection {imageId => Camera} for all cameras in the map
@@ -206,6 +243,9 @@ using Cameras =
 /// collection {trackId => Landmark} for all landmarks in the map.
 /// trackIds correspond to feature_tracks
 using Landmarks = std::unordered_map<TrackId, Landmark>;
+
+/// collection {flowId => Flow}
+using Flows = std::unordered_map<FlowId, Flow>;
 
 /// camera candidate to be added to map
 struct CameraCandidate {

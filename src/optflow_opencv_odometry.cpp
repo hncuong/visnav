@@ -167,7 +167,7 @@ pangolin::ManagedImage<uint8_t> imgl_last;
 
 /// Flows
 Flows flows;
-// Flows flows;
+Flows all_flows;
 
 /// Next flow id to add to all flows
 TrackId next_flow_id = 0;
@@ -192,9 +192,6 @@ LandmarkMatchData last_md_featureToTrack;
 
 /// Pyramid level
 int pyramid_level = 3;
-int stereo_pyramid_level = 3;
-bool use_basalt_forward = true;
-bool use_basalt_stereo = true;
 
 /// Cells to store keypoints
 int num_bin_x = 5;
@@ -207,15 +204,11 @@ int new_kps = 0;
 
 /// TIME Measurements
 double total_t1 = 0.;
-double total_t10 = 0.;
 double total_t2 = 0.;
 double total_t3 = 0.;
 double total_t4 = 0.;
 double total_t5 = 0.;
 double total_t6 = 0.;
-
-// RunID
-int run_id = 0;
 
 ///////////////////////////////////////////////////////////////////////////////
 /// GUI parameters
@@ -340,15 +333,8 @@ int main(int argc, char** argv) {
   app.add_option("--kf_frequency", kf_frequency,
                  "Number of max consecutive regular frames: " +
                      std::to_string(kf_frequency));
-
-  // For Optical flow pyramid
   app.add_option("--pyramid-lv", df_pyramid_lv,
                  "Number of pyramid lv " + std::to_string(df_pyramid_lv));
-  app.add_option("--stereo-pyramid-lv", stereo_pyramid_level,
-                 "Number of pyramid lv for stereo matching " +
-                     std::to_string(stereo_pyramid_level));
-
-  // For adding keypoints
   app.add_option("--nbin-x", num_bin_x,
                  "Number bins on x axis " + std::to_string(num_bin_x));
   app.add_option("--nbin-y", num_bin_y,
@@ -356,13 +342,6 @@ int main(int argc, char** argv) {
   app.add_option("--new-kps-kf", new_kf_num_new_keypoints,
                  "Number of accum new kps to take new kf " +
                      std::to_string(new_kf_num_new_keypoints));
-
-  // Use Basalt or Lucas for OF
-  app.add_option("--use-bs-fw", use_basalt_forward, "use_basalt_forward");
-  app.add_option("--use-bs-st", use_basalt_stereo, "use_basalt_stereo");
-
-  // Run ID
-  app.add_option("--run-id", run_id, "Run ID.");
 
   try {
     app.parse(argc, argv);
@@ -519,52 +498,6 @@ int main(int argc, char** argv) {
   std::cout << "\nTIME MEASUREMENTS: " << total_t1 << " " << total_t2 << " "
             << total_t3 << " " << total_t4 << " " << total_t5 << " " << total_t6
             << " \n";
-  std::cout << total_t10 << "\n";
-
-  // Save config and run times and num keyframes to file
-  // What to save backproject_distance_threshold_in_pixels, pyramid_level,
-  // num_bin_x, num_bin_y, use_basalt_forward, use_basalt_stereo
-  // Runtime total, num keyframes
-  std::ofstream stat_file("results/of_basalt.txt", std::ios_base::app);
-  double run_time =
-      total_t1 + total_t2 + total_t3 + total_t4 + total_t5 + total_t6;
-  size_t num_kfs = all_cameras.size() + cameras.size() / 2;
-  stat_file << run_id << "\t" << backproject_distance_threshold_in_pixels
-            << "\t" << pyramid_level << "\t" << stereo_pyramid_level << "\t"
-            << num_bin_x << "\t" << num_bin_y << "\t" << use_basalt_forward
-            << "\t" << use_basalt_stereo << "\t" << total_t1 << "\t" << total_t2
-            << "\t" << total_t3 << "\t" << total_t4 << "\t" << total_t5 << "\t"
-            << total_t6 << "\t" << run_time << "\t" << num_kfs << " \n";
-
-  stat_file.close();
-
-  // Save flow length
-  std::ofstream flow_length("results/flow_length_" + std::to_string(run_id) +
-                            ".txt");
-  for (const auto& kv : flows) {
-    flow_length << kv.first << "," << kv.second.length << "\n";
-  }
-
-  for (const auto& kv : old_landmarks) {
-    flow_length << kv.first << "," << kv.second.length << "\n";
-  }
-  flow_length.close();
-
-  // Save kps life
-  std::ofstream kps_lifetime("results/keypoints_lifetime_of_" +
-                             std::to_string(run_id) + ".txt");
-  for (const auto& kv : flows) {
-    kps_lifetime << kv.first << ","
-                 << kv.second.last_frame_obs - kv.second.first_frame_obs + 1
-                 << "\n";
-  }
-
-  for (const auto& kv : old_landmarks) {
-    kps_lifetime << kv.first << ","
-                 << kv.second.last_frame_obs - kv.second.first_frame_obs + 1
-                 << "\n";
-  }
-  kps_lifetime.close();
 
   /// Save cemeras trajectory for evaluation
   save_trajectory();
@@ -626,12 +559,12 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
     /// TODO Change to all flows for visualization
     /// Maybe no 3d correspondent yet
     /// Merge later if needed
-    size_t num_flows = flows.size();
+    size_t num_flows = all_flows.size();
     /// Check alive flows and draw circle around it
     std::vector<TrackId> aliveFlows;
     int total_flows_length = 0;
 
-    for (const auto& kv : flows) {
+    for (const auto& kv : all_flows) {
       if (kv.second.alive) {
         aliveFlows.emplace_back(kv.first);
         total_flows_length += kv.second.flow.size();
@@ -664,13 +597,13 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
     // Check for liveness
     std::vector<TrackId> flowsToDiscard;
     for (const auto& flow_id : flows_to_show) {
-      if (flows.count(flow_id.first) == 0) {
+      if (all_flows.count(flow_id.first) == 0) {
         // If flow disappear
         flowsToDiscard.emplace_back(flow_id.first);
       } else {
         // Or not alive anymore
-        if (!flows.at(flow_id.first).alive)
-          //// if (flows.at(flow_id.first).flow.count(fcid) == 0) // Wrong
+        if (!all_flows.at(flow_id.first).alive)
+          //// if (all_flows.at(flow_id.first).flow.count(fcid) == 0) // Wrong
           // since there are left and right frame
           flowsToDiscard.emplace_back(flow_id.first);
       }
@@ -690,7 +623,7 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
       // Pick random flows
       // First choose alive flows that not show yet
       std::vector<TrackId> flowsToPick;
-      for (const auto& kv : flows) {
+      for (const auto& kv : all_flows) {
         if (flows_to_show.count(kv.first) == 0 && kv.second.alive) {
           flowsToPick.emplace_back(kv.first);
         }
@@ -736,10 +669,10 @@ void draw_image_overlay(pangolin::View& v, size_t view_id) {
       glColor3f(color_code[0], color_code[1], color_code[2]);
 
       // Only select some flows
-      if (flows.count(trackId) == 0 || !flows.at(trackId).alive) {
+      if (all_flows.count(trackId) == 0 || !all_flows.at(trackId).alive) {
         flows_to_discard.emplace_back(trackId);
       } else {
-        const auto& flow = flows.at(trackId);
+        const auto& flow = all_flows.at(trackId);
 
         // If flow exist in the frame
         // Draw the point in the current frame
@@ -1181,40 +1114,21 @@ bool next_step() {
   pangolin::ManagedImage<uint8_t> imgl = pangolin::LoadImage(images[fcidl]);
   std::cout << "\nPROCESSING " << fcidl << "\n";
 
-  auto ckp10 = std::chrono::high_resolution_clock::now();
-  double t10 =
-      std::chrono::duration_cast<std::chrono::nanoseconds>(ckp10 - start)
-          .count();
-  total_t10 += t10 / 1e9;
-
-  // convert pangolin::ManagedImage --> visnav::Image
-  visnav::ManagedImage<uint8_t> imgl_v, imgr_v, imgl_last_v;
-  //  visnav::ManagedImagePyr<uint8_t> imgl_pyr, imgr_pyr, imgl_last_pyr;
-
-  //  imgl_v.CopyFrom(visnav::Image<uint8_t>(imgl.ptr, imgl.w, imgl.h,
-  //  imgl.pitch));
-
-  // Checkpoint 1
-  auto ckp1 = std::chrono::high_resolution_clock::now();
-  double t1 = std::chrono::duration_cast<std::chrono::nanoseconds>(ckp1 - start)
-                  .count();
-  total_t1 += t1 / 1e9;
-
   MatchData md_stereo;
   LandmarkMatchData md;
   KeypointsData kdr;
 
   // 1st: Flow from last frame to current frame
   MatchData md_last;
+  auto ckp1 = std::chrono::high_resolution_clock::now();
+  double t1 = std::chrono::duration_cast<std::chrono::nanoseconds>(ckp1 - start)
+                  .count();
+  total_t1 += t1 / 1e9;
 
   /// Do Optical Flow here
   if (current_frame > 0) {
-    //    imgl_last_v.CopyFrom(visnav::Image<uint8_t>(imgl_last.ptr,
-    //    imgl_last.w,
-    //                                                imgl_last.h,
-    //                                                imgl_last.pitch));
-    optical_flows(imgl_last, imgl, kd_last, kdl, md_last, pyramid_level,
-                  backproject_distance_threshold2, use_basalt_forward);
+    optical_flows_opencv(imgl_last, imgl, kd_last, kdl, md_last, pyramid_level,
+                         backproject_distance_threshold2);
   }
 
   auto ckp2 = std::chrono::high_resolution_clock::now();
@@ -1260,12 +1174,11 @@ bool next_step() {
 
     pangolin::ManagedImage<uint8_t> imgr = pangolin::LoadImage(images[fcidr]);
 
-    md_stereo.T_i_j = T_0_1;
-
-    /// Do Optical Flow here
     // Optical Flow to find keypoints and stereo matches to right image
-    optical_flows(imgl, imgr, kdl, kdr, md_stereo, stereo_pyramid_level,
-                  backproject_distance_threshold2, use_basalt_stereo);
+    optical_flows_opencv(imgl, imgr, kdl, kdr, md_stereo, pyramid_level,
+                         backproject_distance_threshold2);
+
+    md_stereo.T_i_j = T_0_1;
 
     auto ckp4 = std::chrono::high_resolution_clock::now();
     double t4 =
@@ -1300,12 +1213,6 @@ bool next_step() {
     localize_camera_optical_flow(
         current_pose, calib_cam.intrinsics[0], kdl, flows,
         reprojection_error_pnp_inlier_threshold_pixel, md);
-
-    for (const auto& kv : md.inliers) {
-      const auto& trackId = kv.second;
-      // Add obs
-      flows.at(trackId).last_frame_obs = fcidl.frame_id;
-    }
 
     current_pose = md.T_w_c;
 
@@ -1373,12 +1280,6 @@ bool next_step() {
     localize_camera_optical_flow(
         current_pose, calib_cam.intrinsics[0], kdl, flows,
         reprojection_error_pnp_inlier_threshold_pixel, md);
-
-    for (const auto& kv : md.inliers) {
-      const auto& trackId = kv.second;
-      // Add obs
-      flows.at(trackId).last_frame_obs = fcidl.frame_id;
-    }
 
     // Update match for next round
     last_md_featureToTrack = md;
@@ -1539,10 +1440,7 @@ void save_trajectory() {
   all_cameras[last_fcidl] = current_cam;
 
   // Store the trajectory over
-  auto filename = "results/stamped_trajectory_optical_flow_" +
-                  std::to_string(run_id) + ".txt";
-  std::ofstream trajectory_file(filename);
-
+  std::ofstream trajectory_file("stamped_of_opencv_odometry_trajectory.txt");
   trajectory_file << std::fixed;
 
   if (trajectory_file.is_open()) {
@@ -1565,7 +1463,9 @@ void save_trajectory() {
                       << quaternion_coefficients.w() << "\n";
     }
     trajectory_file.close();
-    std::cout << "Trajectory is saved to " << filename << std::endl;
+    std::cout
+        << "Trajectory is saved to stamped_of_opencv_odometry_trajectory.txt"
+        << std::endl;
   } else {
     std::cout << "Fail to open the file" << std::endl;
   }
@@ -1573,10 +1473,8 @@ void save_trajectory() {
 
 void save_all_trajectory() {
   // Store the trajectory over
-  auto filename = "results/stamped_trajectory_optical_flow_all_" +
-                  std::to_string(run_id) + ".txt";
-  std::ofstream trajectory_file(filename);
-
+  std::ofstream trajectory_file(
+      "stamped_of_opencv_odometry_trajectory_all.txt");
   trajectory_file << std::fixed;
 
   if (trajectory_file.is_open()) {
@@ -1599,7 +1497,9 @@ void save_all_trajectory() {
                       << quaternion_coefficients.w() << "\n";
     }
     trajectory_file.close();
-    std::cout << "Trajectory is saved to " << filename << std::endl;
+    std::cout << "Trajectory is saved to "
+                 "stamped_of_opencv_odometry_trajectory_all.txt"
+              << std::endl;
   } else {
     std::cout << "Fail to open the file" << std::endl;
   }

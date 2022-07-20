@@ -95,7 +95,7 @@ message(STATUS "Found TBB ${TBB_VERSION_MAJOR}.${TBB_VERSION_MINOR} (interface v
 
 # to use link to target "OpenCV"
 # NOTE: not specifying version, since 2, 3 or 4 is fine
-find_package(OpenCV REQUIRED COMPONENTS core features2d)
+find_package(OpenCV REQUIRED COMPONENTS core features2d video)
 message(STATUS "Found OpenCV ${OpenCV_VERSION} headers in: ${OpenCV_INCLUDE_DIRS}")
 add_library(OpenCV INTERFACE IMPORTED)
 set_property(TARGET OpenCV PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${OpenCV_INCLUDE_DIRS})
@@ -120,6 +120,9 @@ target_link_libraries(odometry Ceres::ceres pangolin TBB::tbb OpenCV opengv)
 
 add_executable(optical_flow_odometry src/optical_flow_odometry.cpp)
 target_link_libraries(optical_flow_odometry Ceres::ceres pangolin TBB::tbb OpenCV opengv)
+
+add_executable(of_opencv_odometry src/optflow_opencv_odometry.cpp)
+target_link_libraries(of_opencv_odometry Ceres::ceres pangolin TBB::tbb OpenCV opengv)
 
 enable_testing()
 add_subdirectory(test)

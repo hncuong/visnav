@@ -77,6 +77,8 @@ void load_data(const std::string& path, const std::string& calib_path);
 bool next_step();
 void optimize();
 void compute_projections();
+void save_trajectory();
+void save_all_trajectory();
 
 ///////////////////////////////////////////////////////////////////////////////
 /// Constants
@@ -99,7 +101,7 @@ std::atomic<bool> opt_finished{false};
 
 std::set<FrameId> kf_frames;
 
-std::shared_ptr<std::thread> opt_thread;
+// std::shared_ptr<std::thread> opt_thread;
 
 /// intrinsic calibration
 Calibration calib_cam;
@@ -119,6 +121,11 @@ Matches feature_matches;
 
 /// camera poses in the current map
 Cameras cameras;
+// Camera poses
+Cameras all_cameras;
+
+/// Save all poses for all timestamp
+Cameras all_poses;
 
 /// copy of cameras for optimization in parallel thread
 Cameras cameras_opt;
@@ -136,6 +143,17 @@ Landmarks old_landmarks;
 /// cameras, landmarks, and feature_tracks; used for visualization and
 /// determining outliers; indexed by images
 ImageProjections image_projections;
+
+/// TIME Measurements
+double total_t1 = 0.;
+double total_t2 = 0.;
+double total_t3 = 0.;
+double total_t4 = 0.;
+double total_t5 = 0.;
+double total_t6 = 0.;
+
+// Run Id
+int run_id = 0;
 
 ///////////////////////////////////////////////////////////////////////////////
 /// GUI parameters
@@ -213,6 +231,10 @@ using Button = pangolin::Var<std::function<void(void)>>;
 
 Button next_step_btn("ui.next_step", &next_step);
 
+Button save_trajectory_btn("ui.save_trajectory", &save_trajectory);
+
+Button save_all_trajectory_btn("ui.save_all_trajectory", &save_all_trajectory);
+
 ///////////////////////////////////////////////////////////////////////////////
 /// GUI and Boilerplate Implementation
 ///////////////////////////////////////////////////////////////////////////////
@@ -231,6 +253,9 @@ int main(int argc, char** argv) {
                  "Dataset path. Default: " + dataset_path);
   app.add_option("--cam-calib", cam_calib,
                  "Path to camera calibration. Default: " + cam_calib);
+
+  // Run ID
+  app.add_option("--run-id", run_id, "Run ID.");
 
   try {
     app.parse(argc, argv);
@@ -369,6 +394,45 @@ int main(int argc, char** argv) {
       // nop
     }
   }
+
+  /// Print time measure
+  std::cout << "\nTIME MEASUREMENTS: " << total_t1 << " " << total_t2 << " "
+            << total_t3 << " " << total_t4 << " " << total_t5 << " " << total_t6
+            << " \n";
+
+  // Save config and run times and num keyframes to file
+  // What to save backproject_distance_threshold_in_pixels, pyramid_level,
+  // num_bin_x, num_bin_y, use_basalt_forward, use_basalt_stereo
+  // Runtime total, num keyframes
+  std::ofstream stat_file("results/odometry.txt", std::ios_base::app);
+  double run_time =
+      total_t1 + total_t2 + total_t3 + total_t4 + total_t5 + total_t6;
+  size_t num_kfs = all_cameras.size() + cameras.size() / 2;
+  stat_file << run_id << "\t" << total_t1 << "\t" << total_t2 << "\t"
+            << total_t3 << "\t" << total_t4 << "\t" << total_t5 << "\t"
+            << total_t6 << "\t" << run_time << "\t" << num_kfs << " \n";
+
+  stat_file.close();
+
+  // Save flow length
+  std::ofstream flow_length("results/keypoints_lifetime_" +
+                            std::to_string(run_id) + ".txt");
+  for (const auto& kv : landmarks) {
+    flow_length << kv.first << ","
+                << kv.second.last_frame_obs - kv.second.first_frame_obs + 1
+                << "\n";
+  }
+
+  for (const auto& kv : old_landmarks) {
+    flow_length << kv.first << ","
+                << kv.second.last_frame_obs - kv.second.first_frame_obs + 1
+                << "\n";
+  }
+  flow_length.close();
+
+  /// Save trajectory
+  save_trajectory();
+  save_all_trajectory();
 
   return 0;
 }
@@ -664,6 +728,40 @@ void draw_scene() {
     render_camera(current_pose.matrix(), 2.0f, color_camera_current, 0.1f);
   }
 
+  // render trajectory
+  // Draw the trajectory of left cameras
+  bool show_trajectory = true;
+  FrameCamId fcid_cur(show_frame1, 0);
+  FrameCamId fcid_prev(fcid_cur.frame_id - 1, 0);
+  glLineWidth(2.0);
+  glColor3f(1.0, 0.0, 0.0);  // red
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+  if (show_trajectory) {
+    // Draw line to the last frame
+    if (all_poses.count(fcid_cur) > 0) {
+      while (all_poses.count(fcid_prev) > 0) {
+        // T_w_c to location
+        const auto& cur_Twc = all_poses.at(fcid_cur).T_w_c;
+        const auto& prev_Twc = all_poses.at(fcid_prev).T_w_c;
+
+        Eigen::Vector3d camera_p3d = Eigen::Vector3d::Zero();
+        Eigen::Vector3d cur_p3d = cur_Twc * camera_p3d;
+        Eigen::Vector3d prev_p3d = prev_Twc * camera_p3d;
+
+        std::vector<Eigen::Vector3d> vertices;
+        vertices.emplace_back(cur_p3d);
+        vertices.emplace_back(prev_p3d);
+        pangolin::glDrawLines(vertices);
+
+        // Update cur and last
+        fcid_cur = FrameCamId(fcid_prev.frame_id, 0);
+        fcid_prev = FrameCamId(fcid_cur.frame_id - 1, 0);
+      }
+    }
+  }
+
   // render points
   if (show_points3d && landmarks.size() > 0) {
     glPointSize(3.0);
@@ -776,6 +874,9 @@ void load_data(const std::string& dataset_path, const std::string& calib_path) {
 // Execute next step in the overall odometry pipeline. Call this repeatedly
 // until it returns false for automatic execution.
 bool next_step() {
+  // Start measure time
+  auto start = std::chrono::high_resolution_clock::now();
+
   if (current_frame >= int(images.size()) / NUM_CAMS) return false;
 
   const Sophus::SE3d T_0_1 = calib_cam.T_i_c[0].inverse() * calib_cam.T_i_c[1];
@@ -801,10 +902,22 @@ bool next_step() {
     pangolin::ManagedImage<uint8_t> imgl = pangolin::LoadImage(images[fcidl]);
     pangolin::ManagedImage<uint8_t> imgr = pangolin::LoadImage(images[fcidr]);
 
+    auto ckp1 = std::chrono::high_resolution_clock::now();
+    double t1 =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(ckp1 - start)
+            .count();
+    total_t1 += t1 / 1e9;
+
     detectKeypointsAndDescriptors(imgl, kdl, num_features_per_image,
                                   rotate_features);
     detectKeypointsAndDescriptors(imgr, kdr, num_features_per_image,
                                   rotate_features);
+
+    auto ckp2 = std::chrono::high_resolution_clock::now();
+    double t2 =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(ckp2 - ckp1)
+            .count();
+    total_t2 += t2 / 1e9;
 
     md_stereo.T_i_j = T_0_1;
 
@@ -823,7 +936,10 @@ bool next_step() {
 
     feature_corners[fcidl] = kdl;
     feature_corners[fcidr] = kdr;
-    feature_matches[std::make_pair(fcidl, fcidr)] = md_stereo;
+    // TODO update to insert
+    feature_matches.insert(
+        std::make_pair(std::make_pair(fcidl, fcidr), md_stereo));
+    //    feature_matches[std::make_pair(fcidl, fcidr)] = md_stereo;
 
     LandmarkMatchData md;
 
@@ -837,7 +953,16 @@ bool next_step() {
     localize_camera(current_pose, calib_cam.intrinsics[0], kdl, landmarks,
                     reprojection_error_pnp_inlier_threshold_pixel, md);
 
+    for (const auto& kv : md.inliers) {
+      const auto& trackId = kv.second;
+      // Add obs
+      landmarks.at(trackId).last_frame_obs = fcidl.frame_id;
+    }
+
     current_pose = md.T_w_c;
+    Camera current_cam;
+    current_cam.T_w_c = md.T_w_c;
+    all_poses.emplace(fcidl, current_cam);
 
     cameras[fcidl].T_w_c = current_pose;
     cameras[fcidr].T_w_c = current_pose * T_0_1;
@@ -845,17 +970,39 @@ bool next_step() {
     add_new_landmarks(fcidl, fcidr, kdl, kdr, calib_cam, md_stereo, md,
                       landmarks, next_landmark_id);
 
-    remove_old_keyframes(fcidl, max_num_kfs, cameras, landmarks, old_landmarks,
-                         kf_frames);
+    remove_old_keyframes(fcidl, max_num_kfs, cameras, all_cameras, landmarks,
+                         old_landmarks, kf_frames);
     optimize();
 
     current_pose = cameras[fcidl].T_w_c;
+
+    if (!opt_running && opt_finished) {
+      //      opt_thread->join();
+      landmarks = landmarks_opt;
+      cameras = cameras_opt;
+      calib_cam = calib_cam_opt;
+
+      opt_finished = false;
+
+      // Save all poses for left cam
+      for (const auto& kv : cameras) {
+        if (kv.first.cam_id == 0) {
+          all_poses.emplace(kv.first, kv.second);
+        }
+      }
+    }
 
     // update image views
     change_display_to_image(fcidl);
     change_display_to_image(fcidr);
 
     compute_projections();
+
+    auto ckp3 = std::chrono::high_resolution_clock::now();
+    double t3 =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(ckp3 - ckp2)
+            .count();
+    total_t3 += t3 / 1e9;
 
     current_frame++;
     return true;
@@ -876,8 +1023,20 @@ bool next_step() {
 
     pangolin::ManagedImage<uint8_t> imgl = pangolin::LoadImage(images[fcidl]);
 
+    auto ckp4 = std::chrono::high_resolution_clock::now();
+    double t4 =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(ckp4 - start)
+            .count();
+    total_t4 += t4 / 1e9;
+
     detectKeypointsAndDescriptors(imgl, kdl, num_features_per_image,
                                   rotate_features);
+
+    auto ckp5 = std::chrono::high_resolution_clock::now();
+    double t5 =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(ckp5 - ckp4)
+            .count();
+    total_t5 += t5 / 1e9;
 
     feature_corners[fcidl] = kdl;
 
@@ -892,25 +1051,47 @@ bool next_step() {
     localize_camera(current_pose, calib_cam.intrinsics[0], kdl, landmarks,
                     reprojection_error_pnp_inlier_threshold_pixel, md);
 
+    for (const auto& kv : md.inliers) {
+      const auto& trackId = kv.second;
+      // Add obs
+      landmarks.at(trackId).last_frame_obs = fcidl.frame_id;
+    }
+
     current_pose = md.T_w_c;
+    Camera current_cam;
+    current_cam.T_w_c = md.T_w_c;
+    all_poses.emplace(fcidl, current_cam);
 
     if (int(md.inliers.size()) < new_kf_min_inliers && !opt_running &&
         !opt_finished) {
       take_keyframe = true;
     }
 
-    if (!opt_running && opt_finished) {
-      opt_thread->join();
-      landmarks = landmarks_opt;
-      cameras = cameras_opt;
-      calib_cam = calib_cam_opt;
+    //    if (!opt_running && opt_finished) {
+    //      opt_thread->join();
+    //      landmarks = landmarks_opt;
+    //      cameras = cameras_opt;
+    //      calib_cam = calib_cam_opt;
 
-      opt_finished = false;
-    }
+    //      opt_finished = false;
+
+    //      // TODO Save all poses for left cam
+    //      for (const auto& kv : cameras) {
+    //        if (kv.first.cam_id == 0) {
+    //          all_poses.emplace(kv.first, kv.second);
+    //        }
+    //      }
+    //    }
 
     // update image views
     change_display_to_image(fcidl);
     change_display_to_image(fcidr);
+
+    auto ckp6 = std::chrono::high_resolution_clock::now();
+    double t6 =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(ckp6 - ckp5)
+            .count();
+    total_t6 += t6 / 1e9;
 
     current_frame++;
     return true;
@@ -997,17 +1178,101 @@ void optimize() {
   landmarks_opt = landmarks;
 
   opt_running = true;
+  std::set<FrameCamId> fixed_cameras = {{fid, 0}, {fid, 1}};
+  bundle_adjustment(feature_corners, ba_options, fixed_cameras, calib_cam_opt,
+                    cameras_opt, landmarks_opt);
+  opt_finished = true;
+  opt_running = false;
 
-  opt_thread.reset(new std::thread([fid, ba_options] {
-    std::set<FrameCamId> fixed_cameras = {{fid, 0}, {fid, 1}};
+  //  opt_thread.reset(new std::thread([fid, ba_options] {
+  //    std::set<FrameCamId> fixed_cameras = {{fid, 0}, {fid, 1}};
 
-    bundle_adjustment(feature_corners, ba_options, fixed_cameras, calib_cam_opt,
-                      cameras_opt, landmarks_opt);
+  //    bundle_adjustment(feature_corners, ba_options, fixed_cameras,
+  //    calib_cam_opt,
+  //                      cameras_opt, landmarks_opt);
 
-    opt_finished = true;
-    opt_running = false;
-  }));
+  //    opt_finished = true;
+  //    opt_running = false;
+  //  }));
 
   // Update project info cache
   compute_projections();
+}
+
+void save_trajectory() {
+  all_cameras.insert(cameras.begin(), cameras.end());
+
+  // add last frame as well
+  FrameCamId last_fcidl(current_frame - 1, 0);
+  Camera current_cam;
+  current_cam.T_w_c = current_pose;
+  all_cameras[last_fcidl] = current_cam;
+
+  // Store the trajectory over
+  auto filename =
+      "results/stamped_odometry_trajectory_" + std::to_string(run_id) + ".txt";
+  std::ofstream trajectory_file(filename);
+  //  std::ofstream trajectory_file("stamped_odometry_trajectory.txt");
+  trajectory_file << std::fixed;
+
+  if (trajectory_file.is_open()) {
+    for (auto& camera : all_cameras) {
+      FrameCamId fcid = camera.first;
+      Camera current_camera = camera.second;
+      if (fcid.cam_id == 1) {
+        continue;
+      }
+      const auto& translation = current_camera.T_w_c.translation().data();
+      const auto& quaternion_coefficients =
+          current_camera.T_w_c.so3().unit_quaternion().coeffs();
+      double ts = timestamps[fcid.frame_id] / 1e9;
+
+      trajectory_file << ts << " " << translation[0] << " " << translation[1]
+                      << " " << translation[2] << " "
+                      << quaternion_coefficients.x() << " "
+                      << quaternion_coefficients.y() << " "
+                      << quaternion_coefficients.z() << " "
+                      << quaternion_coefficients.w() << "\n";
+    }
+    trajectory_file.close();
+    std::cout << "Trajectory is saved to stamped_odometry_trajectory.txt"
+              << std::endl;
+  } else {
+    std::cout << "Fail to open the file" << std::endl;
+  }
+}
+
+void save_all_trajectory() {
+  // Store the trajectory over
+  auto filename = "results/stamped_odometry_trajectory_all_" +
+                  std::to_string(run_id) + ".txt";
+  std::ofstream trajectory_file(filename);
+  trajectory_file << std::fixed;
+
+  if (trajectory_file.is_open()) {
+    for (auto& camera : all_poses) {
+      FrameCamId fcid = camera.first;
+      Camera current_camera = camera.second;
+      if (fcid.cam_id == 1) {
+        continue;
+      }
+      const auto& translation = current_camera.T_w_c.translation().data();
+      const auto& quaternion_coefficients =
+          current_camera.T_w_c.so3().unit_quaternion().coeffs();
+      double ts = timestamps[fcid.frame_id] / 1e9;
+
+      trajectory_file << ts << " " << translation[0] << " " << translation[1]
+                      << " " << translation[2] << " "
+                      << quaternion_coefficients.x() << " "
+                      << quaternion_coefficients.y() << " "
+                      << quaternion_coefficients.z() << " "
+                      << quaternion_coefficients.w() << "\n";
+    }
+    trajectory_file.close();
+    std::cout << "Trajectory is saved to "
+                 "stamped_odometry_trajectory_all.txt"
+              << std::endl;
+  } else {
+    std::cout << "Fail to open the file" << std::endl;
+  }
 }
