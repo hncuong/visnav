@@ -1,4 +1,24 @@
-## Vision-based Navigation
+## Indirect Visual Odometry with Optical Flow Project for Vision-based Navigation course
+Team member:
+- Cuong Ha
+- Warakorn Jetlohasiri
+
+We adapted Optical flow to track and match keypoints in Visual Odometry (replace feature matching) by extending Visual Odometry pipeline.
+
+Two Sparse Optical Flow methods were used:
+- Lucas-Kanade method: OpenCV implementations.
+- Usenko's KLT-based optical flow.
+
+Optical flow were use to track and match keypoints for both frame to frame and stereo image pairs.
+
+The extending code are mainly included in (`include/visnav/optical_flow.h`, `include/visnav/optical_flow_utils.h`, `include/visnav/of_grid.h`, `src/optical_flow_odometry.cpp`).
+- `optical_flow.h`: contains Usenko's optical flow method implementations.
+- `optical_flow_utils.h`: contains find matches landmarks, localization, add landmarks function for optical flow odometry.
+- `of_grid`: grid-based keypoints adding to create new flows.
+- `optical_flow_odometry`: optical flow visual odometry executor.
+
+Evaluation were processed using ATE, RPE metrics with [TUM RGB-D benchmark tools](https://vision.in.tum.de/data/datasets/rgbd-dataset/tools). 
+Trajectory were evalutated with [RPG trajectory evaluation](https://github.com/uzh-rpg/rpg_trajectory_evaluation). 
 
 This code is a part of the practical course "Vision-based Navigation" (IN2106) taught at the Technical University of Munich.
 
